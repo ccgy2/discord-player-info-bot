@@ -214,17 +214,17 @@ def add_numeric_totals(tot: Dict[str, float], inc: Dict[str, float]):
             tot[k] = tot.get(k, 0.0) + float(v)
 
 # ───────────────────────────────────────
-# Embed helpers
+# Embed helpers (줄바꿈 형태로 보여주도록 변경)
 def make_player_embed(d: Dict[str, Any], title_prefix: str = "") -> discord.Embed:
     title = f"{d['display_name']} 선수 정보" if not title_prefix else f"{title_prefix} {d['display_name']}"
-    emb = discord.Embed(title=title, color=discord.Color.blue())
-    emb.add_field(name="폼", value=d.get("arm_angle") or "-", inline=True)
-    emb.add_field(name="팀", value=d.get("team") or "-", inline=True)
-    emb.add_field(name="\u200b", value="\u200b", inline=False)
-    pitches_text = pitch_str_from_list(d.get("pitches", [])) or "-"
-    emb.add_field(name="구종", value=pitches_text, inline=False)
+    arm = d.get("arm_angle") or "-"
+    team = d.get("team") or "-"
     role = d.get("role") or "-"
-    emb.set_footer(text="⚾ 선수 데이터베이스  •  포지션: " + role)
+    pitches_text = pitch_str_from_list(d.get("pitches", [])) or "-"
+
+    desc = f"폼: {arm}\n팀: {team}\n포지션: {role}\n\n구종: {pitches_text}"
+    emb = discord.Embed(title=title, description=desc, color=discord.Color.blue())
+    emb.set_footer(text="⚾ 선수 데이터베이스")
     return emb
 
 def make_ok_embed(msg: str) -> discord.Embed:
@@ -240,42 +240,8 @@ async def on_ready():
     print(f"✅ Logged in as {bot.user}")
     print(f"📁 DATA_DIR: {DATA_DIR}")
 
-# 도움말(사용법 + 예시 항상 포함)
-@bot.command(name="도움", aliases=["정보도우미", "help"])
-async def help_cmd(ctx: commands.Context):
-    p = COMMAND_PREFIX
-    emb = discord.Embed(
-        title="도움말",
-        color=discord.Color.blurple(),
-        description=(
-            f"**조회**\n"
-            f"• `{p}정보 닉네임` — 카드 보기\n\n"
-            f"**등록/수정(구종 머지 기본)**\n"
-            f"• 신규 등록: `{p}추가 닉네임 팔각도 팀=팀명 포지션=투수|타자 | 포심(40) 슬라이더(20)`\n"
-            f"• 기존 선수 구종 추가: `{p}추가 닉네임 | 포심(35) 커터(20)`\n"
-            f"• 수정(합치기): `{p}수정 닉네임 언더핸드 팀=레이 마린스 포지션=타자 | 포심(20) 체인지업(30)`\n"
-            f"• 부분 삭제: `{p}수정 닉네임 구종-=포심 커터`\n"
-            f"• 전체 교체: `{p}수정 닉네임 구종전체=포심(40) 슬라이더(20)`\n\n"
-            f"**이동/목록/삭제**\n"
-            f"• 이적: `{p}팀변경 닉네임 새팀`\n"
-            f"• 포지션 변경: `{p}포지션변경 닉네임 새포지션`\n"
-            f"• 목록: `{p}목록 팀=팀명 포지션=투수` (검색=`{p}목록 검색=포심`)\n"
-            f"• 삭제: `{p}삭제 닉네임`\n\n"
-            f"**일괄 가져오기**\n"
-            f"• `{p}가져오기파일 팀명` + TXT 첨부 (전원 그 팀으로 저장)\n"
-            f"• `{p}가져오기파일` + TXT 첨부 (파일 내 팀/포지션 헤더 사용)\n\n"
-            f"**기록(통계)**\n"
-            f"• 타자: `{p}기록추가타자 닉네임 타수=3 안타=2 2루타=1 볼넷=1 사구=0 희생플라이=0`\n"
-            f"• 투수: `{p}기록추가투수 닉네임 이닝=5.2 자책=2 피안타=4 볼넷=1 사구=0 삼진=6`\n"
-            f"• 보기: `{p}기록보기 닉네임`  •  초기화: `{p}기록리셋 닉네임`\n\n"
-            f"**백업**\n"
-            f"• `{p}백업zip` — 데이터 전체 ZIP"
-        )
-    )
-    await ctx.reply(embed=emb)
-
 # ───────────────────────────────────────
-# key=value 추출 (공백/한글/기호 안전) — 모든 키 re.escape 처리
+# key=value 추출 (공백/한글/기호 안전)
 def extract_kv_span(text: str, key: str) -> Optional[str]:
     """
     key=VALUE 형태에서 VALUE를 추출.
@@ -289,15 +255,67 @@ def extract_kv_span(text: str, key: str) -> Optional[str]:
     return m.group(1).strip() if m else None
 
 # ───────────────────────────────────────
+# 도움말 (항상 사용법+예시 포함)
+@bot.command(name="도움", aliases=["정보도우미", "help"])
+async def help_cmd(ctx: commands.Context):
+    p = COMMAND_PREFIX
+    emb = discord.Embed(
+        title="도움말",
+        color=discord.Color.blurple(),
+        description=(
+            f"**조회**\n"
+            f"• `{p}정보 닉네임` — 선수 카드 보기\n"
+            f"• `{p}정보` — 사용 예시 보기\n"
+            f"• `{p}팀 팀명` — 팀 소속 선수 목록 (텍스트)\n\n"
+            f"**등록/수정(구종은 기본 ‘합치기’)**\n"
+            f"• 신규 등록: `{p}추가 닉네임 팔각도 팀=팀명 포지션=투수|타자 | 포심(40) 슬라이더(20)`\n"
+            f"• 기존 구종 추가/갱신: `{p}추가 닉네임 | 포심(35) 커터(20)`\n"
+            f"• 수정(합치기): `{p}수정 닉네임 언더핸드 팀=레이 마린스 포지션=타자 | 슬라이더(40)`\n"
+            f"• 부분 삭제: `{p}수정 닉네임 구종-=포심 커터`  또는  `{p}구종삭제 닉네임 포심 커터`\n"
+            f"• 전체 교체: `{p}수정 닉네임 구종전체=포심(50) 슬라이더(30)`\n\n"
+            f"**이동/목록/삭제**\n"
+            f"• 이적: `{p}팀변경 닉네임 새팀`\n"
+            f"• 포지션 변경: `{p}포지션변경 닉네임 새포지션`\n"
+            f"• 목록: `{p}목록 팀=팀명 포지션=투수` (검색: `{p}목록 검색=포심`)\n"
+            f"• 삭제: `{p}삭제 닉네임`\n\n"
+            f"**일괄 가져오기**\n"
+            f"• `{p}가져오기파일 팀명` + TXT 첨부 (전원 팀 적용) / `{p}가져오기파일` (파일 헤더 사용)\n\n"
+            f"**기록(통계)**\n"
+            f"• 타자: `{p}기록추가타자 닉네임 타수=3 안타=2 2루타=1 볼넷=1 사구=0 희생플라이=0`\n"
+            f"• 투수: `{p}기록추가투수 닉네임 이닝=5.2 자책=2 피안타=4 볼넷=1 사구=0 삼진=6`\n"
+            f"• 보기: `{p}기록보기 닉네임`  •  초기화: `{p}기록리셋 닉네임`\n\n"
+            f"**백업** `{p}백업zip` — 데이터 전체 ZIP"
+        )
+    )
+    await ctx.reply(embed=emb)
+
+# ───────────────────────────────────────
 @bot.command(name="정보")
-async def info_cmd(ctx, *, nick: str):
+async def info_cmd(ctx, *, nick: Optional[str] = None):
+    # 인자 없으면 사용 예시 UI
+    if not nick:
+        p = COMMAND_PREFIX
+        e = discord.Embed(
+            title="정보 사용 예시",
+            color=discord.Color.teal(),
+            description=(
+                f"• `{p}정보 닉네임`\n"
+                f"• 예) `{p}정보 rlaBAT`\n\n"
+                f"등록/수정은 아래 명령을 참고하세요:\n"
+                f"`{p}추가 닉네임 팔각도 팀=팀명 포지션=투수|타자 | 포심(40) 슬라이더(20)`\n"
+                f"`{p}추가 닉네임 | 포심(35) 커터(20)`"
+            )
+        )
+        return await ctx.reply(embed=e)
+
     p = find_player(nick)
     if not p:
         return await ctx.reply(embed=make_warn_embed("선수를 찾지 못했어요."))
     d = parse_player_file(p.read_text(encoding="utf-8"))
     await ctx.reply(embed=make_player_embed(d))
 
-# 추가: (신규 또는 기존 병합 추가)
+# ───────────────────────────────────────
+# 추가/수정(머지 로직 포함)
 def parse_add_tail(tail: str) -> Tuple[str, Optional[str], Optional[str], Optional[str], List[Tuple[str, Optional[str]]]]:
     left, right = (tail, "")
     if "|" in tail:
@@ -315,6 +333,7 @@ def parse_add_tail(tail: str) -> Tuple[str, Optional[str], Optional[str], Option
     role = extract_kv_span(rest, "포지션")
     arm  = extract_kv_span(rest, "팔각도")
 
+    # 키워드 제거하고 남은 자유텍스트를 팔각도로 허용
     free = re.sub(r"(팀\s*=\s*.+?)(?=\s(?:팀=|포지션=|팔각도=)|$)", "", rest)
     free = re.sub(r"(포지션\s*=\s*.+?)(?=\s(?:팀=|포지션=|팔각도=)|$)", "", free)
     free = re.sub(r"(팔각도\s*=\s*.+?)(?=\s(?:팀=|포지션=|팔각도=)|$)", "", free)
@@ -342,6 +361,11 @@ def replace_all_pitches(text: str) -> List[Tuple[str, Optional[str]]]:
     for n, s in items:
         seen[n] = s
     return [(n, seen[n]) for n in seen]
+
+def remove_pitches(existing: List[Tuple[str, Optional[str]]],
+                   names_to_remove: List[str]) -> List[Tuple[str, Optional[str]]]:
+    rm = {n.lower() for n in names_to_remove}
+    return [(n, s) for n, s in existing if n.lower() not in rm]
 
 @bot.command(name="추가")
 async def add_cmd(ctx, *, tail: str):
@@ -373,13 +397,6 @@ async def add_cmd(ctx, *, tail: str):
     d = parse_player_file(player_card_path(nick, team, role).read_text(encoding="utf-8"))
     await ctx.reply(embed=make_player_embed(d, title_prefix="등록 완료:"))
 
-# ───────────────────────────────────────
-# 수정(합치기/삭제/전체교체 지원)
-def remove_pitches(existing: List[Tuple[str, Optional[str]]],
-                   names_to_remove: List[str]) -> List[Tuple[str, Optional[str]]]:
-    rm = {n.lower() for n in names_to_remove}
-    return [(n, s) for n, s in existing if n.lower() not in rm]
-
 @bot.command(name="수정")
 async def edit_cmd(ctx, nick: str, *, args: str):
     pth = find_player(nick)
@@ -406,7 +423,6 @@ async def edit_cmd(ctx, nick: str, *, args: str):
     if not new_arm and free:
         new_arm = free
 
-    # 구종 파라미터 (이스케이프 걱정 없이 literal key로 넘김)
     repl_text = extract_kv_span(left, "구종전체")
     add_text  = extract_kv_span(left, "구종+")
     del_text  = extract_kv_span(left, "구종-")
@@ -434,23 +450,17 @@ async def edit_cmd(ctx, nick: str, *, args: str):
     nd = parse_player_file(player_card_path(d["display_name"], new_team, new_role).read_text(encoding="utf-8"))
     await ctx.reply(embed=make_player_embed(nd, title_prefix="수정 완료:"))
 
-# 편의 명령
-@bot.command(name="구종추가")
-async def add_only_pitches(ctx, nick: str, *, text: str):
+# 구종 부분 삭제(짧은 명령)
+@bot.command(name="구종삭제")
+async def cmd_delete_pitch(ctx, nick: str, *, names: str):
     p = find_player(nick)
-    if not p: return await ctx.reply(embed=make_warn_embed("선수를 찾지 못했어요."))
+    if not p:
+        return await ctx.reply(embed=make_warn_embed("선수를 찾지 못했어요."))
     d = parse_player_file(p.read_text(encoding="utf-8"))
-    d["pitches"] = merge_pitches(d.get("pitches", []), parse_pitch_line(text))
-    write_player(d["display_name"], d.get("arm_angle",""), d["pitches"], d.get("team",""), d.get("role",""))
-    await ctx.reply(embed=make_player_embed(d, title_prefix="구종 추가:"))
-
-@bot.command(name="부분삭제")
-async def partial_delete_pitches(ctx, nick: str, *, names: str):
-    p = find_player(nick)
-    if not p: return await ctx.reply(embed=make_warn_embed("선수를 찾지 못했어요."))
-    d = parse_player_file(p.read_text(encoding="utf-8"))
-    name_list = [t for t in re.split(r"[,\s]+", names.strip()) if t]
-    d["pitches"] = remove_pitches(d.get("pitches", []), name_list)
+    to_remove = [t for t in re.split(r"[,\s]+", names.strip()) if t]
+    if not to_remove:
+        return await ctx.reply(embed=make_warn_embed("삭제할 구종 이름을 적어주세요. 예) `!구종삭제 김선수 포심 커터`"))
+    d["pitches"] = remove_pitches(d.get("pitches", []), to_remove)
     write_player(d["display_name"], d.get("arm_angle",""), d["pitches"], d.get("team",""), d.get("role",""))
     await ctx.reply(embed=make_player_embed(d, title_prefix="구종 삭제:"))
 
@@ -500,7 +510,7 @@ async def list_cmd(ctx, *, filters: str = ""):
         if role_filter and (d.get("role","") != role_filter): continue
         if search:
             hay = " ".join([d.get("display_name",""), d.get("arm_angle",""), d.get("team",""), d.get("role",""),
-                            ",".join([n for n,_ in d.get("pitches",[])])]).lower()
+                            ",".join([n for n,_ in d.get("pitches',[])])]).lower()
             if search not in hay: continue
         items.append(
             f"• {d['display_name']} — {d.get('arm_angle','-')} / {d.get('team','-')} / "
@@ -512,6 +522,36 @@ async def list_cmd(ctx, *, filters: str = ""):
     if len(items) > 50:
         desc += f"\n… 외 {len(items)-50}명"
     await ctx.reply(embed=discord.Embed(title="선수 목록", description=desc, color=discord.Color.dark_teal()))
+
+# 팀별 텍스트 출력 (요청 포맷)
+@bot.command(name="팀")
+async def team_cmd(ctx, *, team_name: str):
+    out_sections: List[str] = []
+    for p in DATA_DIR.rglob("*.txt"):
+        try:
+            d = parse_player_file(p.read_text(encoding="utf-8"))
+        except:
+            continue
+        if (d.get("team") or "") != team_name:
+            continue
+        head = f"{d['display_name']} ({d.get('arm_angle')})" if d.get("arm_angle") else d["display_name"]
+        pitches = pitch_str_from_list(d.get("pitches", []))
+        out_sections.append(f"{head}\n{pitches}\n")
+    if not out_sections:
+        return await ctx.reply(embed=make_warn_embed(f"팀 `{team_name}` 의 선수를 찾지 못했어요."))
+    text = "\n".join(out_sections).rstrip()
+    # 2000자 제한 대비 분할
+    chunks = []
+    while len(text) > 1900:
+        cut = text.rfind("\n\n", 0, 1900)
+        if cut == -1:
+            cut = 1900
+        chunks.append(text[:cut])
+        text = text[cut:].lstrip()
+    chunks.append(text)
+    for i, ch in enumerate(chunks, 1):
+        header = f"팀: {team_name} (페이지 {i}/{len(chunks)})" if len(chunks) > 1 else f"팀: {team_name}"
+        await ctx.reply(f"**{header}**\n```text\n{ch}\n```")
 
 @bot.command(name="가져오기파일")
 async def import_cmd(ctx, *, team_arg: str = ""):
@@ -542,7 +582,8 @@ async def backup_cmd(ctx):
     buf.seek(0)
     await ctx.reply("데이터 백업", file=discord.File(buf, "backup.zip"))
 
-# 기록
+# ───────────────────────────────────────
+# 기록 (동일)
 def kv_to_dict(args: List[str]) -> Dict[str, float]:
     out: Dict[str, float] = {}
     for tok in args:
