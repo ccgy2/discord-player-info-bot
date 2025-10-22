@@ -492,36 +492,58 @@ async def delete_cmd(ctx, *, nick: str):
         return await ctx.reply(embed=make_warn_embed("선수를 찾지 못했어요."))
     p.unlink(missing_ok=True)
     await ctx.reply(embed=make_ok_embed("삭제 완료!"))
-
 @bot.command(name="목록")
 async def list_cmd(ctx, *, filters: str = ""):
-    team_filter = None; role_filter=None; search=None
+    team_filter = None
+    role_filter = None
+    search = None
+
     for tok in filters.split():
-        if tok.startswith("팀="): team_filter = tok.split("=",1)[1].strip()
-        elif tok.startswith("포지션="): role_filter = tok.split("=",1)[1].strip()
-        elif tok.startswith("검색="): search = tok.split("=",1)[1].strip().lower()
-    items=[]
+        if tok.startswith("팀="):
+            team_filter = tok.split("=", 1)[1].strip()
+        elif tok.startswith("포지션="):
+            role_filter = tok.split("=", 1)[1].strip()
+        elif tok.startswith("검색="):
+            search = tok.split("=", 1)[1].strip().lower()
+
+    items = []
     for p in DATA_DIR.rglob("*.txt"):
         try:
             d = parse_player_file(p.read_text(encoding="utf-8"))
         except:
             continue
-        if team_filter and (d.get("team","") != team_filter): continue
-        if role_filter and (d.get("role","") != role_filter): continue
+
+        if team_filter and (d.get("team", "") != team_filter):
+            continue
+        if role_filter and (d.get("role", "") != role_filter):
+            continue
+
         if search:
-            hay = " ".join([d.get("display_name",""), d.get("arm_angle",""), d.get("team",""), d.get("role",""),
-                            ",".join([n for n,_ in d.get("pitches',[])])]).lower()
-            if search not in hay: continue
+            hay = " ".join([
+                d.get("display_name", ""),
+                d.get("arm_angle", ""),
+                d.get("team", ""),
+                d.get("role", ""),
+                ",".join([n for n, _ in d.get("pitches", [])])
+            ]).lower()
+            if search not in hay:
+                continue
+
         items.append(
             f"• {d['display_name']} — {d.get('arm_angle','-')} / {d.get('team','-')} / "
-            + (pitch_str_from_list(d.get('pitches',[])) or "-")
+            + (pitch_str_from_list(d.get('pitches', [])) or "-")
         )
+
     if not items:
         return await ctx.reply(embed=make_warn_embed("표시할 항목이 없습니다."))
+
     desc = "\n".join(items[:50])
     if len(items) > 50:
-        desc += f"\n… 외 {len(items)-50}명"
-    await ctx.reply(embed=discord.Embed(title="선수 목록", description=desc, color=discord.Color.dark_teal()))
+        desc += f"\n… 외 {len(items) - 50}명"
+
+    await ctx.reply(
+        embed=discord.Embed(title="선수 목록", description=desc, color=discord.Color.dark_teal())
+    )
 
 # 팀별 텍스트 출력 (요청 포맷)
 @bot.command(name="팀")
