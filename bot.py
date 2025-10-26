@@ -266,38 +266,38 @@ def replace_all_pitches(text: str) -> List[Tuple[str, Optional[str]]]:
 async def help_cmd(ctx: commands.Context):
     p = COMMAND_PREFIX
     e = discord.Embed(
-        title="📌 마린스 봇 명령어 안내",
+        title="📌 선수 정보 봇 명령어 안내",
         description="봇에서 사용할 수 있는 명령어 목록과 사용 예시입니다.",
         color=discord.Color.brand_red()
     )
     e.add_field(
         name="!등록",
-        value=f"여러 선수 등록/갱신\n예시:\n```text\n!등록\nTaek_yeon63 (오버핸드)\n포심(40) 싱커(40) 체인지업(40)\n\nBless_to_u (쓰리쿼터)\n포심(40) 포크(30) 슬라이더(20)\n```",
+        value=f"여러 선수 등록/갱신\n예시:\n```text\n!등록\nALAX (오버핸드)\n포심(40) 싱커(40) 체인지업(40)\n\nSTEVE (쓰리쿼터)\n포심(40) 포크(30) 슬라이더(20)\n```",
         inline=False
     )
     e.add_field(
         name="!정보 / !정보상세",
-        value=f"선수 정보 확인 (상세는 팀/포지션 포함)\n예시: `{p}정보 Taek_yeon63` , `{p}정보상세 Taek_yeon63`",
+        value=f"선수 정보 확인 (상세는 팀/포지션 포함)\n예시: `{p}정보 STEVE` , `{p}정보상세 ALAX`",
         inline=False
     )
     e.add_field(
         name="!수정",
         value=(
             "폼/팀/포지션/구종 수정 (닉 유지, 구종은 기본 합치기)\n"
-            f"예시: `{p}수정 Taek_yeon63 언더핸드 포지션=투수 | 포심(50) 싱커(50) 체인지업(50)`\n"
-            f"부분삭제: `{p}수정 Taek_yeon63 구종-=포심 커터`\n"
-            f"전체교체: `{p}수정 Taek_yeon63 구종전체=포심(60) 슬라이더(40)`"
+            f"예시: `{p}수정 STEVE 언더핸드 포지션=투수 | 포심(50) 싱커(50) 체인지업(50)`\n"
+            f"부분삭제: `{p}수정 STEVE 구종-=포심 커터`\n"
+            f"전체교체: `{p}수정 STEVE 구종전체=포심(60) 슬라이더(40)`"
         ),
         inline=False
     )
     e.add_field(
         name="!닉변",
-        value=f"닉네임 변경\n예시: `{p}닉변 Taek_yeon63 Taek_yeon64`",
+        value=f"닉네임 변경\n예시: `{p}닉변 STEVE STEVE1`",
         inline=False
     )
     e.add_field(
         name="!삭제",
-        value=f"선수 정보 삭제\n예시: `{p}삭제 Taek_yeon63`",
+        value=f"선수 정보 삭제\n예시: `{p}삭제 STEVE`",
         inline=False
     )
     e.add_field(
@@ -309,7 +309,7 @@ async def help_cmd(ctx: commands.Context):
         name="!추가 / !구종삭제",
         value=(
             "빠른 구종 추가 / 특정 구종만 삭제\n"
-            f"예시: `{p}추가 Taek_yeon63 포심(60) 체인지업(50)` , `{p}구종삭제 Taek_yeon63 포심 커터`"
+            f"예시: `{p}추가 STEVE 포심(60) 체인지업(50)` , `{p}구종삭제 STEVE 포심 커터`"
         ),
         inline=False
     )
