@@ -8,19 +8,33 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
-firebase_json = os.getenv("FIREBASE_KEY")
+# ─────────────────────────────────────────
+# Firestore 저장/불러오기 함수
+def save_player_to_firestore(nick, arm, pitches, team, role):
+    try:
+        doc_ref = db.collection("players").document(nick)
+        data = {
+            "display_name": nick,
+            "arm_angle": arm,
+            "team": team,
+            "role": role,
+            "pitches": [{"name": n, "value": s} for n, s in pitches],
+            "updated_at": firestore.SERVER_TIMESTAMP
+        }
+        doc_ref.set(data)
+        print(f"✅ Firestore 저장 완료: {nick}")
+    except Exception as e:
+        print(f"❌ Firestore 저장 실패 ({nick}):", e)
 
-if not firebase_json:
-    raise RuntimeError("❌ FIREBASE_KEY 환경변수가 없습니다. Railway Variables에 Firebase 서비스 계정 JSON을 넣어주세요.")
-
-try:
-    cred = credentials.Certificate(json.loads(firebase_json))
-    firebase_admin.initialize_app(cred)
-    db = firestore.client()
-    print("✅ Firestore 연결 성공")
-except Exception as e:
-    print(f"❌ Firestore 초기화 실패: {e}")
-    db = None
+def load_player_from_firestore(nick):
+    try:
+        doc = db.collection("players").document(nick).get()
+        if doc.exists:
+            return doc.to_dict()
+        return None
+    except Exception as e:
+        print(f"⚠️ Firestore 불러오기 실패 ({nick}):", e)
+        return None
 
 # ─────────────────────────────────────────
 load_dotenv()
@@ -819,6 +833,7 @@ async def reset_record(ctx, *, nick: str):
 if __name__ == "__main__":
     ensure_dirs()
     bot.run(TOKEN)
+
 
 
 
