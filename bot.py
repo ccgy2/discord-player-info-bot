@@ -8,6 +8,20 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
+firebase_json = os.getenv("FIREBASE_KEY")
+
+if not firebase_json:
+    raise RuntimeError("❌ FIREBASE_KEY 환경변수가 없습니다. Railway Variables에 Firebase 서비스 계정 JSON을 넣어주세요.")
+
+try:
+    cred = credentials.Certificate(json.loads(firebase_json))
+    firebase_admin.initialize_app(cred)
+    db = firestore.client()
+    print("✅ Firestore 연결 성공")
+except Exception as e:
+    print(f"❌ Firestore 초기화 실패: {e}")
+    db = None
+
 # ─────────────────────────────────────────
 load_dotenv()
 
@@ -805,6 +819,7 @@ async def reset_record(ctx, *, nick: str):
 if __name__ == "__main__":
     ensure_dirs()
     bot.run(TOKEN)
+
 
 
 
