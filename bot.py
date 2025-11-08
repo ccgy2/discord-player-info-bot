@@ -1,4 +1,9 @@
 import firebase_admin
+cred_json = os.getenv("FIREBASE_KEY")
+cred = credentials.Certificate(json.loads(cred_json))
+firebase_admin.initialize_app(cred)
+db = firestore.client()
+print("✅ Firestore 연결 성공")
 from firebase_admin import credentials, firestore
 import os, io, re, json, zipfile, asyncio, shutil, time
 from pathlib import Path
@@ -833,6 +838,7 @@ async def reset_record(ctx, *, nick: str):
 if __name__ == "__main__":
     ensure_dirs()
     bot.run(TOKEN)
+
 
 
 
