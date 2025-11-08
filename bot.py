@@ -1,9 +1,4 @@
 import firebase_admin
-cred_json = os.getenv("FIREBASE_KEY")
-cred = credentials.Certificate(json.loads(cred_json))
-firebase_admin.initialize_app(cred)
-db = firestore.client()
-print("✅ Firestore 연결 성공")
 from firebase_admin import credentials, firestore
 import os, io, re, json, zipfile, asyncio, shutil, time
 from pathlib import Path
@@ -12,6 +7,19 @@ from typing import List, Tuple, Optional, Dict, Any
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
+
+# ─────────────────────────────────────────
+# Firestore 초기화
+cred_json = os.getenv("FIREBASE_KEY")
+if not cred_json:
+    raise RuntimeError("❌ 환경변수 FIREBASE_KEY가 설정되지 않았습니다.")
+try:
+    cred = credentials.Certificate(json.loads(cred_json))
+    firebase_admin.initialize_app(cred)
+    db = firestore.client()
+    print("✅ Firestore 연결 성공")
+except Exception as e:
+    print("❌ Firestore 초기화 실패:", e)
 
 # ─────────────────────────────────────────
 # Firestore 저장/불러오기 함수
@@ -838,6 +846,7 @@ async def reset_record(ctx, *, nick: str):
 if __name__ == "__main__":
     ensure_dirs()
     bot.run(TOKEN)
+
 
 
 
