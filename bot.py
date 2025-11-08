@@ -658,26 +658,23 @@ async def team_cmd(ctx, *, team_name: str):
 async def import_cmd(ctx, *, team_arg: str = ""):
     if not ctx.message.attachments:
         return await ctx.reply(embed=warn("TXT 파일을 첨부해주세요. (예: `!가져오기파일 레이`)"))
+
     att = ctx.message.attachments[0]
     txt = (await att.read()).decode("utf-8", errors="ignore")
-    players = parse_freeform_players(txt)
-    target_team = (team_arg or "").strip()
-    if target_team and target_team.startswith("팀="):
-        target_team = target_team.split("=", 1)[1].strip()
-    count = 0
-    last_path: Optional[Path] = None
-    for nick, arm, pitches in players:
-        old = find_player(nick)
-        team_to_use = target_team if target_team else UNASSIGNED_TEAM_DIR
-        if old:
-            d = parse_player_file(old.read_text(encoding="utf-8"))
-            merged = merge_pitches(d.get("pitches", []), pitches)
-            new_arm = normalize_arm(arm) or d.get("arm_angle","")
-            last_path = write_player(d["display_name"], new_arm, merged, team_to_use or d.get("team",""), d.get("role","") or UNASSIGNED_ROLE_DIR, old_path=old)
-        else:
-            last_path = write_player(nick, normalize_arm(arm) or "", pitches, team_to_use, UNASSIGNED_ROLE_DIR)
-        count += 1
-    await ctx.reply(embed=ok(f"가져오기 완료! 총 {count}명 — 팀: {target_team or '미지정'}\n마지막 저장: {last_path.relative_to(DATA_DIR) if last_path else '-'}"))
+
+    # 🔹 새 형식으로 블록 분리
+    blocks = re.split(r"\n\s*\n", txt.strip())
+    success = 0
+    for block in blocks:
+        data = parse_formatted_player_block(block)
+        if not data:
+            continue
+        try:
+            write_player(data["nick"], data["arm"], data["pitches"], data["team"], "_unassigned_role")
+            success += 1
+        except Exception as e:
+            print("가져오기 오류:", e)
+    await ctx.reply(embed=ok(f"📥 가져오기 완료: {success}명 저장"))
 
 @bot.command(name="백업zip")
 async def backup_cmd(ctx):
@@ -806,4 +803,5 @@ async def reset_record(ctx, *, nick: str):
 if __name__ == "__main__":
     ensure_dirs()
     bot.run(TOKEN)
+
 
