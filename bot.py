@@ -1,3 +1,5 @@
+import firebase_admin
+from firebase_admin import credentials, firestore
 import os, io, re, json, zipfile, asyncio, shutil, time
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
@@ -803,5 +805,6 @@ async def reset_record(ctx, *, nick: str):
 if __name__ == "__main__":
     ensure_dirs()
     bot.run(TOKEN)
+
 
 
