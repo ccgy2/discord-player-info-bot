@@ -370,141 +370,79 @@ async def add_pitch_allowed(ctx, *, pitches: str):
     await ctx.reply(embed=ok(f"구종 추가: {', '.join(added) if added else '없음'}"))
 
 # ─────────────────────────────────────────
-# 등록/추가/수정
-def merge_pitches(existing: List[Tuple[str, Optional[str]]], changes: List[Tuple[str, Optional[str]]]) -> List[Tuple[str, Optional[str]]]:
-    existing = filter_allowed_pitches(existing)
-    changes = filter_allowed_pitches(changes)
-    result: Dict[str, Optional[str]] = {n.lower(): s for n, s in existing}
-    name_map: Dict[str, str] = {n.lower(): n for n, _ in existing}
-    for n, s in changes:
-        k = n.lower()
-        result[k] = s if s is not None else result.get(k)
-        name_map.setdefault(k, n)
-    return [(name_map[k], v) for k, v in result.items()]
+# 등록/추가/수정 (새 형식: 닉 (팔각도) [팀] + 구종)
+PLAYER_BLOCK_RE = re.compile(r"^(.+?)\s*\(([^)]+)\)\s*\[([^\]]+)\]$", re.MULTILINE)
 
-def remove_pitches(existing: List[Tuple[str, Optional[str]]], names_to_remove: List[str]) -> List[Tuple[str, Optional[str]]]:
-    rm = {n.lower() for n in names_to_remove}
-    return [(n, s) for n, s in existing if n.lower() not in rm]
-
-def replace_all_pitches(text: str) -> List[Tuple[str, Optional[str]]]:
-    items = parse_pitch_line(text)
-    seen: Dict[str, Optional[str]] = {}
-    order: List[str] = []
-    for n, s in items:
-        k = n.lower()
-        if k not in seen:
-            order.append(k)
-        seen[k] = s
-    return [(n, seen[n.lower()]) for n in [next(orig for orig in [n for n,_ in items] if orig.lower()==k) for k in order]]
-
-@bot.command(name="추가")
-async def add_cmd(ctx, *, text: str):
-    toks = text.split()
-    if not toks: return await ctx.reply(embed=warn("형식: `!추가 닉네임 포심(40)`"))
-    nick = toks[0]
-    if len(toks) < 2: return await ctx.reply(embed=warn("추가할 구종을 입력하세요."))
-    pitches = parse_pitch_line(" ".join(toks[1:]))
-    p = find_player(nick)
-    if p:
-        d = parse_player_file(p.read_text(encoding="utf-8"))
-        merged = merge_pitches(d.get("pitches", []), pitches)
-        path = write_player(d["display_name"], d.get("arm_angle",""), merged, d.get("team","") or UNASSIGNED_TEAM_DIR, d.get("role","") or UNASSIGNED_ROLE_DIR, old_path=p)
-        nd = parse_player_file(path.read_text(encoding="utf-8"))
-        return await ctx.reply(embed=make_player_embed(nd, title_prefix="구종 추가:", file_path=path))
-    path = write_player(nick, "", pitches, UNASSIGNED_TEAM_DIR, UNASSIGNED_ROLE_DIR)
-    d = parse_player_file(path.read_text(encoding="utf-8"))
-    await ctx.reply(embed=make_player_embed(d, title_prefix="등록 완료:", file_path=path))
-
-def parse_freeform_players(text: str) -> List[Tuple[str, str, List[Tuple[str, Optional[str]]]]]:
-    blocks = re.split(r"\n\s*\n", text.strip())
-    out: List[Tuple[str, str, List[Tuple[str, Optional[str]]]]] = []
-    for b in blocks:
-        lines = [l.strip() for l in b.splitlines() if l.strip()]
-        if not lines: continue
-        first = lines[0]
-        m = re.match(r"(.+?)\(([^)]+)\)", first)
-        if m:
-            nick, arm_raw = m.group(1).strip(), m.group(2).strip()
-            arm = normalize_arm(arm_raw) or ""
-        else:
-            nick, arm = first.strip(), ""
-        pitches = parse_pitch_line(" ".join(lines[1:])) if len(lines) > 1 else []
-        out.append((nick, arm, pitches))
-    return out
+def parse_formatted_player_block(text: str):
+    """닉네임 (팔각도) [팀이름] + 구종 줄 구조"""
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if len(lines) < 2:
+        return None
+    header, pitch_line = lines[0], lines[1]
+    m = PLAYER_BLOCK_RE.match(header)
+    if not m:
+        return None
+    nick, arm, team = m.groups()
+    arm = arm.strip()
+    if arm not in allowed_arm_set():
+        return None
+    team = team.strip()
+    pitches = parse_pitch_line(pitch_line)
+    return {"nick": nick, "arm": arm, "team": team, "pitches": pitches}
 
 @bot.command(name="등록")
-async def register_multi(ctx):
-    content = ctx.message.content
+async def register_players(ctx):
+    content = ctx.message.content.strip()
     if "\n" not in content:
-        return await ctx.reply(embed=warn("`!등록` 다음 줄부터 선수 블록을 적어주세요."))
-    text = content.split("\n", 1)[1]
-    players = parse_freeform_players(text)
-    if not players: return await ctx.reply(embed=warn("파싱할 선수가 없습니다. 예시: `!도움`"))
-    count = 0
-    last_path: Optional[Path] = None
-    for nick, arm, pitches in players:
-        old = find_player(nick)
-        if old:
-            d = parse_player_file(old.read_text(encoding="utf-8"))
-            merged = merge_pitches(d.get("pitches", []), pitches)
-            new_arm = normalize_arm(arm) or d.get("arm_angle","")
-            last_path = write_player(d["display_name"], new_arm, merged, d.get("team","") or UNASSIGNED_TEAM_DIR, d.get("role","") or UNASSIGNED_ROLE_DIR, old_path=old)
-        else:
-            last_path = write_player(nick, normalize_arm(arm) or "", pitches, UNASSIGNED_TEAM_DIR, UNASSIGNED_ROLE_DIR)
-        count += 1
-    footer = f"마지막 저장: {last_path.relative_to(DATA_DIR) if last_path else '-'}"
-    await ctx.reply(embed=ok(f"✅ {count}명의 선수 정보를 등록 완료!\n{footer}"))
+        return await ctx.reply(embed=warn("형식 오류입니다.\n```\n!등록\n닉 (오버핸드) [팀이름]\n포심(20) 커터(30)\n```"))
+    blocks = re.split(r"\n\s*\n", content.split("\n", 1)[1].strip())
+    success = 0
+    for block in blocks:
+        data = parse_formatted_player_block(block)
+        if not data:
+            continue
+        try:
+            write_player(data["nick"], data["arm"], data["pitches"], data["team"], "_unassigned_role")
+            success += 1
+        except Exception as e:
+            print("등록 오류:", e)
+    if success:
+        await ctx.reply(embed=ok(f"✅ {success}명의 선수 정보를 등록 완료!"))
+    else:
+        await ctx.reply(embed=warn("❌ 저장 중 오류가 발생했습니다."))
+
+@bot.command(name="추가")
+async def add_player(ctx):
+    content = ctx.message.content.strip()
+    if "\n" not in content:
+        return await ctx.reply(embed=warn("형식 오류입니다.\n```\n!추가 닉 (팔각도) [팀이름]\n포심(20) 커터(30)\n```"))
+    data = parse_formatted_player_block(content.split("\n", 1)[1].strip())
+    if not data:
+        return await ctx.reply(embed=warn("❌ 형식을 확인해주세요."))
+    try:
+        write_player(data["nick"], data["arm"], data["pitches"], data["team"], "_unassigned_role")
+        await ctx.reply(embed=ok("➕ 1명의 선수 정보를 추가 완료!"))
+    except Exception:
+        await ctx.reply(embed=warn("❌ 저장 중 오류가 발생했습니다."))
 
 @bot.command(name="수정")
-async def edit_cmd(ctx, nick: str, *, args: str):
-    pth = find_player(nick)
-    if not pth: return await ctx.reply(embed=warn("선수를 찾지 못했어요."))
-    d = parse_player_file(pth.read_text(encoding="utf-8"))
+async def edit_player(ctx):
+    content = ctx.message.content.strip()
+    if "\n" not in content:
+        return await ctx.reply(embed=warn("형식 오류입니다.\n```\n!수정 닉 (팔각도) [팀이름]\n포심(20) 커터(30)\n```"))
+    data = parse_formatted_player_block(content.split("\n", 1)[1].strip())
+    if not data:
+        return await ctx.reply(embed=warn("❌ 수정할 선수 정보를 찾지 못했습니다. 형식을 확인해주세요."))
+    old = find_player(data["nick"])
+    if not old:
+        return await ctx.reply(embed=warn("❌ 수정할 선수 정보를 찾지 못했습니다. 형식을 확인해주세요."))
+    try:
+        write_player(data["nick"], data["arm"], data["pitches"], data["team"], "_unassigned_role", old_path=old)
+        await ctx.reply(embed=ok("✏️ 1명의 선수 정보를 수정 완료!"))
+    except Exception as e:
+        print("수정 오류:", e)
+        await ctx.reply(embed=warn("❌ 저장 중 오류가 발생했습니다."))
 
-    left, pipe_part = (args, "")
-    spl = re.split(r"\|\s*", args, maxsplit=1)
-    if len(spl) == 2: left, pipe_part = spl[0].strip(), spl[1].strip()
-    else: left = args.strip()
-
-    new_team = extract_kv_span(left, "팀") or d.get("team") or UNASSIGNED_TEAM_DIR
-    new_role = extract_kv_span(left, "포지션") or d.get("role") or UNASSIGNED_ROLE_DIR
-
-    arm_kv  = extract_kv_span(left, "팔각도")
-    free = re.sub(r"(팀\s*=\s*.+?)(?=\s(?:팀=|포지션=|팔각도=|구종=|구종\+|구종\-|구종전체=)|$)", "", left)
-    free = re.sub(r"(포지션\s*=\s*.+?)(?=\s(?:팀=|포지션=|팔각도=|구종=|구종\+|구종\-|구종전체=)|$)", "", free)
-    free = re.sub(r"(팔각도\s*=\s*.+?)(?=\s(?:팀=|포지션=|팔각도=|구종=|구종\+|구종\-|구종전체=)|$)", "", free)
-    free = free.strip()
-    cand_arm = arm_kv or (free if free in allowed_arm_set() else None)
-    valid_arm = normalize_arm(cand_arm)
-
-    repl_text = extract_kv_span(left, "구종전체")
-    add_text  = extract_kv_span(left, "구종+")
-    del_text  = extract_kv_span(left, "구종-")
-    set_text  = extract_kv_span(left, "구종")
-
-    pitches = d.get("pitches", [])
-    if repl_text:
-        pitches = replace_all_pitches(repl_text)
-    else:
-        if pipe_part: pitches = merge_pitches(pitches, parse_pitch_line(pipe_part))
-        if add_text:  pitches = merge_pitches(pitches, parse_pitch_line(add_text))
-        if set_text:  pitches = merge_pitches(pitches, replace_all_pitches(set_text))
-        if del_text:
-            names = [n for n, _ in parse_pitch_line(del_text)]
-            pitches = remove_pitches(pitches, names)
-
-    if valid_arm is not None:
-        d["arm_angle"] = valid_arm
-
-    d["pitches"] = pitches
-    new_path = write_player(d["display_name"], d.get("arm_angle",""), d.get("pitches",[]), new_team, new_role, old_path=pth)
-    nd = parse_player_file(new_path.read_text(encoding="utf-8"))
-    note = ""
-    if cand_arm and valid_arm is None:
-        note = "팔각도 값이 허용 목록이 아니라서 변경하지 않았습니다."
-    if (not nd.get("pitches")) and (repl_text or pipe_part or add_text or set_text):
-        note = (note + " " if note else "") + "허용되지 않은 구종은 자동으로 제외되었습니다."
-    await ctx.reply(embed=make_player_embed(nd, title_prefix="수정 완료:", footer_note=note, file_path=new_path))
 
 # ─────────────────────────────────────────
 # 구종 삭제/닉변/삭제
@@ -868,3 +806,4 @@ async def reset_record(ctx, *, nick: str):
 if __name__ == "__main__":
     ensure_dirs()
     bot.run(TOKEN)
+
