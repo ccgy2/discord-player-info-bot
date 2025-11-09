@@ -1,30 +1,44 @@
-import firebase_admin
-from firebase_admin import credentials, firestore
+# ⚾ 클로베츠 플랜츠 — 선수 정보/기록 + Firestore + Discord Bot (Railway/로컬 모두 호환)
+# 전체 파일: bot.py (FULL)
+
 import os, io, re, json, zipfile, asyncio, shutil, time
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
 
+# ---- .env 를 가장 먼저 로드 (로컬 실행 호환) ----
+from dotenv import load_dotenv
+load_dotenv()
+
+# ---- Discord ----
 import discord
 from discord.ext import commands
-from dotenv import load_dotenv
+
+# ---- Firebase / Firestore ----
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # ─────────────────────────────────────────
-# Firestore 초기화
+# Firestore 초기화 (실패해도 봇은 계속 동작하게 설계)
+db: Optional[firestore.Client] = None
+
 cred_json = os.getenv("FIREBASE_KEY")
 if not cred_json:
-    raise RuntimeError("❌ 환경변수 FIREBASE_KEY가 설정되지 않았습니다.")
-try:
-    cred = credentials.Certificate(json.loads(cred_json))
-    firebase_admin.initialize_app(cred)
-    db = firestore.client()
-    print("✅ Firestore 연결 성공")
-except Exception as e:
-    print("❌ Firestore 초기화 실패:", e)
+    print("❌ 환경변수 FIREBASE_KEY가 설정되지 않았습니다. (Firestore 저장은 비활성)")
+else:
+    try:
+        cred = credentials.Certificate(json.loads(cred_json))
+        firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        print("✅ Firestore 연결 성공")
+    except Exception as e:
+        db = None
+        print("❌ Firestore 초기화 실패:", e)
 
 # ─────────────────────────────────────────
-# Firestore 저장/불러오기 함수
+# Firestore 저장/불러오기 함수 (db가 없으면 자동 무시)
 def save_player_to_firestore(nick, arm, pitches, team, role):
-    global db
+    if db is None:
+        return  # Firestore 비활성 상태에서는 조용히 패스
     try:
         doc_ref = db.collection("players").document(nick)
         data = {
@@ -41,6 +55,8 @@ def save_player_to_firestore(nick, arm, pitches, team, role):
         print(f"❌ Firestore 저장 실패 ({nick}):", e)
 
 def load_player_from_firestore(nick):
+    if db is None:
+        return None
     try:
         doc = db.collection("players").document(nick).get()
         if doc.exists:
@@ -51,8 +67,7 @@ def load_player_from_firestore(nick):
         return None
 
 # ─────────────────────────────────────────
-load_dotenv()
-
+# 봇 환경
 TOKEN = os.getenv("DISCORD_TOKEN")
 DATA_DIR = Path(os.getenv("DATA_DIR", "./data")).resolve()
 COMMAND_PREFIX = (os.getenv("COMMAND_PREFIX", "!") or "!").strip()
@@ -64,7 +79,7 @@ FA_TEAM = "FA"
 WAIVERS_TEAM = "웨이버"
 
 if not TOKEN:
-    raise RuntimeError("DISCORD_TOKEN이 .env에 필요합니다.")
+    raise RuntimeError("DISCORD_TOKEN이 .env 또는 환경변수에 필요합니다.")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -113,6 +128,16 @@ ALLOWED = load_allowed()
 def allowed_arm_set(): return set(ALLOWED.get("arms", []))
 def allowed_pitch_set(): return set(ALLOWED.get("pitches", []))
 
+# 공백 제거 정규화 매핑(“너클커브” == “너클 커브”)
+def _build_pitch_canon_map(pitches: List[str]) -> Dict[str, str]:
+    m = {}
+    for p in pitches:
+        key = re.sub(r"\s+", "", p)
+        m[key] = p
+    return m
+
+PITCH_CANON_MAP = _build_pitch_canon_map(ALLOWED["pitches"])
+
 # ─────────────────────────────────────────
 # 경로 & 파일 유틸
 def safe_name(txt: str) -> str:
@@ -143,22 +168,39 @@ def normalize_arm(value: Optional[str]) -> Optional[str]:
     v = value.strip()
     return v if v in allowed_arm_set() else None
 
+def _canon_pitch_name(name: str) -> str:
+    """공백을 제거해 허용 목록의 정식 이름으로 치환(없으면 원본 반환)"""
+    key = re.sub(r"\s+", "", name)
+    return PITCH_CANON_MAP.get(key, name)
+
 def filter_allowed_pitches(items: List[Tuple[str, Optional[str]]]) -> List[Tuple[str, Optional[str]]]:
     allowed = allowed_pitch_set()
-    return [(n, s) for n, s in items if n in allowed]
+    out: List[Tuple[str, Optional[str]]] = []
+    for n, s in items:
+        cn = _canon_pitch_name(n)
+        if cn in allowed:
+            out.append((cn, s))
+    return out
 
 def parse_pitch_line(line: str) -> List[Tuple[str, Optional[str]]]:
+    """
+    '포심(20) 투심(30) 너클커브(40)' 또는 '포심(20), 투심(30), 너클 커브(40)'
+    쉼표/공백 모두 항목 구분으로 허용. 괄호 없는 '포심'도 허용.
+    """
+    tokens = re.split(r"[,\s]+", (line or "").strip())
     items: List[Tuple[str, Optional[str]]] = []
-    for raw in re.split(r"[,\s]+", (line or "").strip()):
-        if not raw: 
+    for raw in tokens:
+        if not raw:
             continue
-        if raw in allowed_arm_set():  # 팔각도가 구종 파트에 섞여 들어오면 무시
+        if raw in allowed_arm_set():   # 팔각도 단어가 섞여 들어오면 무시
             continue
-        m = re.match(r"(.+?)\(([^)]+)\)", raw)
+        m = re.match(r"(.+?)\(([^)]+)\)$", raw)
         if m:
-            items.append((m.group(1).strip(), m.group(2).strip()))
+            name = m.group(1).strip()
+            speed = m.group(2).strip()
+            items.append((_canon_pitch_name(name), speed))
         else:
-            items.append((raw.strip(), None))
+            items.append((_canon_pitch_name(raw.strip()), None))
     return filter_allowed_pitches(items)
 
 def serialize_player(nick: str, arm: str, pitches: List[Tuple[str, Optional[str]]], team: str, role: str) -> str:
@@ -210,17 +252,17 @@ def write_player(nick: str, arm: str, pitches: List[Tuple[str, Optional[str]]], 
 # 탐색 로직(보강)
 def find_player(nick: str) -> Optional[Path]:
     """
-    1) 파일 내용 파싱 후 display_name 비교
-    2) 파일명 직접 비교(safe_name(nick).txt)로도 보조 탐색
+    1) 파일명 직접 비교(safe_name(nick).txt)
+    2) 파일 내용 파싱 후 display_name 비교
     """
     key_disp = nick.lower() if CASE_INSENSITIVE else nick
     target_filename = f"{safe_name(nick)}.txt"
 
-    # 2) 파일명 매치 우선(대규모 데이터일 때 빠름)
+    # 1) 파일명 매치
     for p in DATA_DIR.rglob(target_filename):
         return p
 
-    # 1) 내용 파싱 매치
+    # 2) 내용 파싱 매치
     for p in DATA_DIR.rglob("*.txt"):
         try:
             d = parse_player_file(p.read_text(encoding="utf-8"))
@@ -235,6 +277,18 @@ def pitch_str_from_list(pitches: List[Tuple[str, Optional[str]]]) -> str:
     return " ".join([f"{n}({s})" if s else n for n, s in pitches]) if pitches else "-"
 
 # ─────────────────────────────────────────
+# 구종 리스트 조작 유틸 (누락됐던 함수 구현)
+def remove_pitches(cur: List[Tuple[str, Optional[str]]], to_remove_names: List[str]) -> List[Tuple[str, Optional[str]]]:
+    """이름 정규화(공백 제거) 후 해당 이름과 일치하는 구종 전부 제거"""
+    rm_norm = {re.sub(r"\s+", "", n) for n in to_remove_names}
+    out: List[Tuple[str, Optional[str]]] = []
+    for n, s in cur:
+        if re.sub(r"\s+", "", n) in rm_norm:
+            continue
+        out.append((n, s))
+    return out
+
+# ─────────────────────────────────────────
 # Embeds
 def make_player_embed(d: Dict[str, Any], title_prefix: str = "", footer_note: str = "", file_path: Optional[Path] = None) -> discord.Embed:
     title = f"{d['display_name']} 선수 정보" if not title_prefix else f"{title_prefix} {d['display_name']}"
@@ -246,7 +300,10 @@ def make_player_embed(d: Dict[str, Any], title_prefix: str = "", footer_note: st
     if footer_note:
         foot += f" • {footer_note}"
     if file_path:
-        foot += f" • 저장: {file_path.relative_to(DATA_DIR)}"
+        try:
+            foot += f" • 저장: {file_path.relative_to(DATA_DIR)}"
+        except Exception:
+            foot += f" • 저장: {file_path}"
     emb.set_footer(text=foot)
     return emb
 
@@ -286,17 +343,17 @@ async def help_cmd(ctx: commands.Context):
     e.add_field(
         name="등록(여러명) / 빠른 추가",
         value=(
-            f"`{p}등록`\n```text\n{p}등록\n닉A (오버핸드)\n포심(40) 슬라이더(20)\n\n닉B (사이드암)\n커터(40)\n```\n"
-            f"`{p}추가 닉 포심(40) 커터(20)`"
+            f"`{p}등록`\n```text\n{p}등록\n닉A (오버핸드) [팀]\n포심(40) 슬라이더(20)\n\n닉B (사이드암) [팀]\n커터(40)\n```\n"
+            f"`{p}추가 닉 (오버핸드) [팀]\\n포심(40) 커터(20)`"
         ),
         inline=False
     )
     e.add_field(
         name="수정(머지), 부분삭제/전체교체",
         value=(
-            f"`{p}수정 닉 언더핸드 포지션=투수 | 체인지업(30)`\n"
-            f"`{p}수정 닉 구종-=포심 커터`\n"
-            f"`{p}수정 닉 구종전체=포심(60) 싱커(40)`"
+            f"`{p}수정 닉 (언더핸드) [팀]` + 다음 줄 구종\n"
+            f"`{p}구종삭제 닉 포심 커터`\n"
+            f"`{p}닉변 구닉 새닉`"
         ),
         inline=False
     )
@@ -330,7 +387,11 @@ async def help_cmd(ctx: commands.Context):
 # 디버그/점검 명령
 @bot.command(name="저장경로")
 async def cmd_where(ctx):
-    await ctx.reply(embed=ok(f"DATA_DIR: `{DATA_DIR}`\n파일 수(TXT): {len(list(DATA_DIR.rglob('*.txt')))}\n허용목록: `{ALLOWED_PATH.relative_to(DATA_DIR)}`"))
+    try:
+        rel_allowed = ALLOWED_PATH.relative_to(DATA_DIR)
+    except Exception:
+        rel_allowed = str(ALLOWED_PATH)
+    await ctx.reply(embed=ok(f"DATA_DIR: `{DATA_DIR}`\n파일 수(TXT): {len(list(DATA_DIR.rglob('*.txt')))}\n허용목록: `{rel_allowed}`"))
 
 @bot.command(name="스캔")
 async def cmd_scan(ctx):
@@ -363,8 +424,9 @@ async def cmd_files(ctx):
 
 @bot.command(name="리로드허용")
 async def cmd_reload_allowed(ctx):
-    global ALLOWED
+    global ALLOWED, PITCH_CANON_MAP
     ALLOWED = load_allowed()
+    PITCH_CANON_MAP = _build_pitch_canon_map(ALLOWED["pitches"])
     await ctx.reply(embed=ok("허용 목록을 리로드했습니다."))
 
 # ─────────────────────────────────────────
@@ -396,7 +458,9 @@ async def add_arm_allowed(ctx, *, arms: str):
         if a not in cur:
             cur.add(a); added.append(a)
     data["arms"] = sorted(cur)
-    save_allowed(data); ALLOWED.update(data)
+    save_allowed(data)
+    # 로컬 메모리 갱신
+    ALLOWED.update(data)
     await ctx.reply(embed=ok(f"팔각도 추가: {', '.join(added) if added else '없음'}"))
 
 @bot.command(name="구종추가")
@@ -407,10 +471,15 @@ async def add_pitch_allowed(ctx, *, pitches: str):
     data = load_allowed()
     cur = set(data["pitches"]); added=[]
     for a in cands:
+        # 정식 표기는 그대로 저장
         if a not in cur:
             cur.add(a); added.append(a)
     data["pitches"] = sorted(cur)
-    save_allowed(data); ALLOWED.update(data)
+    save_allowed(data)
+    ALLOWED.update(data)
+    # 캐논 맵도 재생성
+    global PITCH_CANON_MAP
+    PITCH_CANON_MAP = _build_pitch_canon_map(ALLOWED["pitches"])
     await ctx.reply(embed=ok(f"구종 추가: {', '.join(added) if added else '없음'}"))
 
 # ─────────────────────────────────────────
@@ -418,7 +487,7 @@ async def add_pitch_allowed(ctx, *, pitches: str):
 PLAYER_BLOCK_RE = re.compile(r"^(.+?)\s*\(([^)]+)\)\s*\[([^\]]+)\]$", re.MULTILINE)
 
 def parse_formatted_player_block(text: str):
-    """닉네임 (팔각도) [팀이름] + 구종 줄 구조"""
+    """닉네임 (팔각도) [팀이름] + (다음 줄) 구종들"""
     lines = [l.strip() for l in text.splitlines() if l.strip()]
     if len(lines) < 2:
         return None
@@ -490,7 +559,6 @@ async def edit_player(ctx):
         print("수정 오류:", e)
         await ctx.reply(embed=warn("❌ 저장 중 오류가 발생했습니다."))
 
-
 # ─────────────────────────────────────────
 # 구종 삭제/닉변/삭제
 @bot.command(name="구종삭제")
@@ -540,7 +608,7 @@ async def transfer_cmd(ctx, nick: str, *, new_team: str):
 async def release_cmd(ctx, *, nick: str):
     if not await change_team_of(nick, UNASSIGNED_TEAM_DIR):
         return await ctx.reply(embed=warn("선수를 찾지 못했어요."))
-    await ctx.reply(embed=ok(f"🆓 {nick} 방출: 무소속({_unassigned:=UNASSIGNED_TEAM_DIR}) 처리 완료!"))
+    await ctx.reply(embed=ok(f"🆓 {nick} 방출: 무소속({UNASSIGNED_TEAM_DIR}) 처리 완료!"))
 
 @bot.command(name="fa")
 async def fa_cmd(ctx, *, nick: str):
@@ -705,11 +773,9 @@ async def team_cmd(ctx, *, team_name: str):
 async def import_cmd(ctx, *, team_arg: str = ""):
     if not ctx.message.attachments:
         return await ctx.reply(embed=warn("TXT 파일을 첨부해주세요. (예: `!가져오기파일 레이`)"))
-
     att = ctx.message.attachments[0]
     txt = (await att.read()).decode("utf-8", errors="ignore")
-
-    # 🔹 새 형식으로 블록 분리
+    # 새 형식으로 블록 분리
     blocks = re.split(r"\n\s*\n", txt.strip())
     success = 0
     for block in blocks:
@@ -718,6 +784,7 @@ async def import_cmd(ctx, *, team_arg: str = ""):
             continue
         try:
             write_player(data["nick"], data["arm"], data["pitches"], data["team"], "_unassigned_role")
+            save_player_to_firestore(data["nick"], data["arm"], data["pitches"], data["team"], "_unassigned_role")
             success += 1
         except Exception as e:
             print("가져오기 오류:", e)
@@ -850,11 +917,3 @@ async def reset_record(ctx, *, nick: str):
 if __name__ == "__main__":
     ensure_dirs()
     bot.run(TOKEN)
-
-
-
-
-
-
-
-
