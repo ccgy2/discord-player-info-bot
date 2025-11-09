@@ -24,6 +24,7 @@ except Exception as e:
 # ─────────────────────────────────────────
 # Firestore 저장/불러오기 함수
 def save_player_to_firestore(nick, arm, pitches, team, role):
+    global db
     try:
         doc_ref = db.collection("players").document(nick)
         data = {
@@ -446,6 +447,7 @@ async def register_players(ctx):
             continue
         try:
             write_player(data["nick"], data["arm"], data["pitches"], data["team"], "_unassigned_role")
+            save_player_to_firestore(data["nick"], data["arm"], data["pitches"], data["team"], "_unassigned_role")
             success += 1
         except Exception as e:
             print("등록 오류:", e)
@@ -464,6 +466,7 @@ async def add_player(ctx):
         return await ctx.reply(embed=warn("❌ 형식을 확인해주세요."))
     try:
         write_player(data["nick"], data["arm"], data["pitches"], data["team"], "_unassigned_role")
+        save_player_to_firestore(data["nick"], data["arm"], data["pitches"], data["team"], "_unassigned_role")
         await ctx.reply(embed=ok("➕ 1명의 선수 정보를 추가 완료!"))
     except Exception:
         await ctx.reply(embed=warn("❌ 저장 중 오류가 발생했습니다."))
@@ -481,6 +484,7 @@ async def edit_player(ctx):
         return await ctx.reply(embed=warn("❌ 수정할 선수 정보를 찾지 못했습니다. 형식을 확인해주세요."))
     try:
         write_player(data["nick"], data["arm"], data["pitches"], data["team"], "_unassigned_role", old_path=old)
+        save_player_to_firestore(data["nick"], data["arm"], data["pitches"], data["team"], "_unassigned_role")
         await ctx.reply(embed=ok("✏️ 1명의 선수 정보를 수정 완료!"))
     except Exception as e:
         print("수정 오류:", e)
@@ -846,6 +850,7 @@ async def reset_record(ctx, *, nick: str):
 if __name__ == "__main__":
     ensure_dirs()
     bot.run(TOKEN)
+
 
 
 
