@@ -5,11 +5,13 @@ Discord + Firebase (Firestore) Baseball Player Manager Bot
 - discord.py 명령 기반 봇
 - Firestore: players, teams, records(collection per player doc)
 - 한국어 명령어: !정보, !정보상세, !등록, !추가, !수정, !닉변, !삭제, !구종삭제, 팀명령, 기록명령 등
+- 이번 버전: "닉네임 (폼) [팀] 구종(능력치) ..." 형식 파싱 지원
 """
 
 import os
 import json
 import asyncio
+import re
 from datetime import datetime
 from typing import List, Optional
 
@@ -88,45 +90,65 @@ async def ensure_db_or_warn(ctx):
         return False
     return True
 
-# ---------- 기본 헬프 ----------
-@bot.command(name="help")
-async def help_cmd(ctx):
+# ---------- 기본 헬프 (한글) ----------
+async def send_help_text(ctx):
+    BOT = BOT_PREFIX
     cmds = f"""
 **사용 가능한 명령어 (요약)**
 
 **조회**
-`{BOT_PREFIX}정보 닉네임` - 기본 정보 출력  
-`{BOT_PREFIX}정보상세 닉네임` - 구종 / 폼 / 팀 / 포지션 등 상세
+`{BOT}정보 닉네임` - 기본 정보 출력  
+`{BOT}정보상세 닉네임` - 구종 / 폼 / 팀 / 포지션 등 상세
 
-**등록/수정/삭제**
-`{BOT_PREFIX}등록` - 여러 명을 한 번에 등록 (메시지 본문으로 여러 줄 입력)
-`{BOT_PREFIX}추가 닉네임|이름|팀|포지션|구종1,구종2|폼` - 한 명 추가
-`{BOT_PREFIX}수정 닉네임 필드 새값` - 예: `{BOT_PREFIX}수정 yian position P`
-`{BOT_PREFIX}닉변 옛닉 새닉` - 닉네임 변경(문서 ID 변경)
-`{BOT_PREFIX}삭제 닉네임` - 선수 삭제
-`{BOT_PREFIX}구종삭제 닉네임 구종명` - 특정 구종 제거
+**등록/추가/대량등록**
+`{BOT}등록` - 여러 줄 텍스트로 등록 (두 포맷 지원)
+  1) 기존 파이프 형식: `nick|이름|팀|포지션|구종1,구종2|폼`
+  2) 새 포맷(이미지 예시): `닉네임 (폼) [팀] 구종(능력치) 구종(능력치) ...`
+     예: `ccpy (언더핸드) [레이 마린스] 포심(20) 체인지업(20) 포크(30) 너클볼(30) 너클커브(40)`
+
+`{BOT}추가 nick|이름|팀|포지션|구종1,구종2|폼` - 한 명 추가 (파이프 형식)
+`{BOT}추가포맷` - (옵션) 필요 시 별도 포맷 명령 확장 가능
+
+**수정/닉변/삭제**
+`{BOT}수정 닉네임 필드 새값` - 예: `{BOT}수정 yian position P`  
+`{BOT}닉변 옛닉 새닉` - 닉네임 변경  
+`{BOT}삭제 닉네임` - 선수 삭제  
+`{BOT}구종삭제 닉네임 구종명` - 특정 구종 제거
 
 **팀 관리**
-`{BOT_PREFIX}팀 팀명` - 팀 생성/조회  
-`{BOT_PREFIX}목록 players|teams` - 목록 보기  
-`{BOT_PREFIX}이적 닉네임 팀명` - 이적 처리  
-`{BOT_PREFIX}fa 닉네임` - FA 처리 (팀 -> FA)  
-`{BOT_PREFIX}웨이버 닉네임` - 웨이버 상태  
-`{BOT_PREFIX}방출 닉네임` - 방출 처리  
-`{BOT_PREFIX}트레이드 닉1 닉2` - 두 선수 교환  
-`{BOT_PREFIX}팀이름변경 옛이름 새이름` - 팀명 변경  
-`{BOT_PREFIX}팀삭제 팀명` - 팀 삭제 (로스터의 선수는 'Free' 처리)
-`{BOT_PREFIX}가져오기파일` - CSV/TXT 첨부로 선수 대량 등록
+`{BOT}팀 팀명` - 팀 생성/조회  
+`{BOT}목록 players|teams` - 목록 보기  
+`{BOT}이적 닉네임 팀명` - 이적 처리  
+`{BOT}fa 닉네임` - FA 처리  
+`{BOT}웨이버 닉네임` - 웨이버 상태  
+`{BOT}방출 닉네임` - 방출 처리  
+`{BOT}트레이드 닉1 닉2` - 두 선수 교환  
+`{BOT}팀이름변경 옛이름 새이름` - 팀명 변경  
+`{BOT}팀삭제 팀명` - 팀 삭제  
+`{BOT}가져오기파일` - 첨부 CSV/TXT로 대량 등록
 
 **기록 (타자/투수)**
-`{BOT_PREFIX}기록추가타자 닉네임 날짜 PA AB R H RBI HR SB`  
-`{BOT_PREFIX}기록추가투수 닉네임 날짜 IP H R ER BB SO`  
-`{BOT_PREFIX}기록보기 닉네임`  
-`{BOT_PREFIX}기록리셋 닉네임 type` - type: batting|pitching
+`{BOT}기록추가타자 닉네임 날짜 PA AB R H RBI HR SB`  
+`{BOT}기록추가투수 닉네임 날짜 IP H R ER BB SO`  
+`{BOT}기록보기 닉네임`  
+`{BOT}기록리셋 닉네임 type` - type: batting|pitching|all
 
-(자세한 사용법은 각 명령어 사용 시 안내 메시지가 표시됩니다.)
+도움이 필요하면 `{BOT}도움` 또는 `{BOT}도움말` 을 입력하세요.
 """
     await ctx.send(cmds)
+
+@bot.command(name="help")
+async def help_cmd(ctx):
+    await send_help_text(ctx)
+
+# 한국어 별칭
+@bot.command(name="도움")
+async def help_kor(ctx):
+    await send_help_text(ctx)
+
+@bot.command(name="도움말")
+async def help_kor2(ctx):
+    await send_help_text(ctx)
 
 # ---------- 선수 관리 헬퍼 ----------
 def player_doc_ref(nick: str):
@@ -164,7 +186,7 @@ async def info_detail_cmd(ctx, nick: str):
         await ctx.send(f"❌ `{nick}` 선수가 존재하지 않습니다.")
         return
     d = doc.to_dict()
-    pitch_types = ", ".join(d.get("pitch_types", [])) if d.get("pitch_types") else "-"
+    pitch_types = ", ".join([f"{p}" for p in d.get("pitch_types", [])]) if d.get("pitch_types") else "-"
     form = d.get("form","-")
     extra = d.get("extra","-")
     msg = (
@@ -179,11 +201,11 @@ async def info_detail_cmd(ctx, nick: str):
     )
     await ctx.send(msg)
 
-# ---------- 단일 추가 ----------
+# ---------- 단일 추가 (파이프 형식) ----------
 @bot.command(name="추가")
 async def add_one_cmd(ctx, *, payload: str):
     """
-    단일 추가 예시:
+    단일 추가 (파이프 형식):
     !추가 nick|이름|팀|포지션|구종1,구종2|폼
     """
     if not await ensure_db_or_warn(ctx): return
@@ -228,35 +250,70 @@ async def add_one_cmd(ctx, *, payload: str):
 @bot.command(name="등록")
 async def bulk_register_cmd(ctx, *, bulk_text: str = None):
     """
-    여러 줄 등록: 메시지 본문에 여러 줄로 아래 형식 입력
-    nick|이름|팀|포지션|구종1,구종2|폼
-    예시:
-    yian|박승규|Marines|C| |오른손
+    여러 줄 등록: 메시지 본문에 여러 줄로 붙여넣기
+    지원 포맷 (둘 다):
+    1) 파이프: nick|이름|팀|포지션|구종1,구종2|폼
+    2) 라인 포맷: 닉네임 (폼) [팀] 구종(숫자) 구종(숫자) ...
+       예: ccpy (언더핸드) [레이 마린스] 포심(20) 체인지업(20) 포크(30)
     """
     if not await ensure_db_or_warn(ctx): return
-    # If user used attachment instead of inline text, prompt them. But we also support attachment via !가져오기파일
+
     if not bulk_text:
-        await ctx.send("❌ 본문에 등록할 선수 정보를 여러 줄로 붙여넣어 주세요. 예: `nick|이름|팀|포지션|구종1,구종2|폼`")
+        await ctx.send("❌ 본문에 등록할 선수 정보를 여러 줄로 붙여넣어 주세요. (또는 첨부 파일 사용: `!가져오기파일`)")
         return
+
     lines = [l.strip() for l in bulk_text.splitlines() if l.strip()]
     added = 0
     errors = []
+
+    # regex to parse "닉네임 (폼) [팀] 구종(숫자) 구종(숫자) , 구종(숫자)"
+    line_pattern = re.compile(
+        r'^\s*(?P<nick>[^\(\[\s][^\(\[\]]*?)\s*(?:\((?P<form>[^\)]*?)\))?\s*(?:\[(?P<team>[^\]]*?)\])?\s*(?P<pitches>.*)$'
+    )
+    pitch_pattern = re.compile(r'([^\s,()]+)\s*\(\s*(\d+)\s*\)')  # 구종(숫자)
+
     for i, line in enumerate(lines, start=1):
         try:
-            parts = line.split("|")
-            if len(parts) < 4:
-                errors.append(f"라인 {i}: 형식 오류")
-                continue
-            nick = parts[0].strip()
-            name = parts[1].strip()
-            team = parts[2].strip()
-            position = parts[3].strip()
-            pitch_types = []
-            form = ""
-            if len(parts) >=5 and parts[4].strip():
-                pitch_types = [p.strip() for p in parts[4].split(",") if p.strip()]
-            if len(parts) >=6:
-                form = parts[5].strip()
+            # if line contains '|' treat as pipe format
+            if '|' in line:
+                parts = line.split("|")
+                if len(parts) < 4:
+                    errors.append(f"라인 {i}: 파이프 형식 오류")
+                    continue
+                nick = parts[0].strip()
+                name = parts[1].strip()
+                team = parts[2].strip()
+                position = parts[3].strip()
+                pitch_types = []
+                form = ""
+                if len(parts) >=5 and parts[4].strip():
+                    pitch_types = [p.strip() for p in parts[4].split(",") if p.strip()]
+                if len(parts) >=6:
+                    form = parts[5].strip()
+            else:
+                m = line_pattern.match(line)
+                if not m:
+                    errors.append(f"라인 {i}: 파싱 실패")
+                    continue
+                nick = m.group('nick').strip()
+                form = (m.group('form') or "").strip()
+                team = (m.group('team') or "Free").strip()
+                pitch_text = (m.group('pitches') or "").strip()
+
+                # parse pitch types like "포심(20) 체인지업(20), 포크(30)"
+                pitch_types = []
+                for pm in pitch_pattern.finditer(pitch_text):
+                    pname = pm.group(1).strip()
+                    pval = pm.group(2).strip()
+                    # store as "구종(숫자)" string or as dict? keep string for display
+                    pitch_types.append(f"{pname}({pval})")
+
+                # if no explicit name field available, set name = nick
+                name = nick
+
+                # position unknown here; set placeholder
+                position = "N/A"
+
             doc_ref = player_doc_ref(nick)
             data = {
                 "nickname": nick,
@@ -277,9 +334,10 @@ async def bulk_register_cmd(ctx, *, bulk_text: str = None):
             added += 1
         except Exception as e:
             errors.append(f"라인 {i}: {e}")
+
     res = f"✅ 등록 완료: {added}명 추가되었습니다."
     if errors:
-        res += f"\n⚠️ 일부 오류:\n" + "\n".join(errors[:10])
+        res += f"\n⚠️ 일부 오류:\n" + "\n".join(errors[:20])
     await ctx.send(res)
 
 # ---------- 수정 ----------
@@ -387,10 +445,11 @@ async def remove_pitch_cmd(ctx, nick: str, pitch: str):
     try:
         d = doc.to_dict()
         current = d.get("pitch_types", [])
-        if pitch not in current:
+        # pitch may be stored with value like "포심(20)" so remove if equality or startswith
+        newlist = [p for p in current if not (p == pitch or p.startswith(pitch+"("))]
+        if len(newlist) == len(current):
             await ctx.send(f"⚠️ `{nick}` 에 `{pitch}` 구종이 없습니다.")
             return
-        newlist = [p for p in current if p != pitch]
         ref.update({"pitch_types": newlist, "updated_at": now_iso()})
         await ctx.send(f"✅ `{nick}` 의 `{pitch}` 구종이 삭제되었습니다.")
     except Exception as e:
@@ -409,8 +468,8 @@ async def team_cmd(ctx, *, teamname: str):
         return
     t = t_doc.to_dict()
     roster = t.get("roster", [])
-    # fetch first 25 names
     if roster:
+        # fetch first 50 names for display
         lines = []
         for nick in roster[:50]:
             lines.append(nick)
@@ -575,7 +634,7 @@ async def import_file_cmd(ctx):
     """
     사용법:
     - 파일(첨부)을 메시지와 함께 올리고 `!가져오기파일` 명령어를 실행하세요.
-    - 파일 포맷: 각 줄이 `nick|이름|팀|포지션|구종,구종|폼` 형식
+    - 파일 포맷: 각 줄이 `nick|이름|팀|포지션|구종,구종|폼` 형식 OR 새 라인 포맷 허용
     """
     if not await ensure_db_or_warn(ctx): return
     if not ctx.message.attachments:
@@ -712,9 +771,9 @@ async def reset_records_cmd(ctx, nick: str, typ: str):
 async def on_command_error(ctx, error):
     # 기본적 친절한 메시지
     if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send("인자가 부족합니다. `!help` 로 사용법을 확인하세요.")
+        await ctx.send("인자가 부족합니다. `!도움` 로 사용법을 확인하세요.")
     elif isinstance(error, commands.CommandNotFound):
-        await ctx.send("알 수 없는 명령어입니다. `!help` 를 확인하세요.")
+        await ctx.send("알 수 없는 명령어입니다. `!도움` 를 확인하세요.")
     else:
         # fallback: 내부 오류 로그
         await ctx.send(f"명령 실행 중 오류가 발생했습니다: `{error}`")
