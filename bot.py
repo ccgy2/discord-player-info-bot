@@ -250,6 +250,7 @@ async def send_help_text(ctx):
 **팀 관리**
 `{BOT}팀 팀명` - 팀 생성/조회  
 `{BOT}목록 players|teams` - 목록 보기  
+`{BOT}팀삭제 팀명` - 해당 팀의 선수들을 모두 FA로 돌리고 팀 문서를 삭제합니다.
 
 **기록 (타자/투수)**
 `{BOT}기록추가타자 닉네임 날짜 PA AB R H RBI HR SB`  
@@ -608,6 +609,7 @@ async def import_file_cmd(ctx, *, args: str = ""):
 
             # prepare data_obj, try to preserve created_at when overwriting
             created_at_val = now_iso()
+            old = None
             if exists:
                 old = doc_ref.get().to_dict()
                 if old and old.get("created_at"):
@@ -769,6 +771,70 @@ async def transfer_cmd(ctx, nick: str, *, newteam: str):
         await ctx.send(embed=embed)
     except Exception as e:
         await ctx.send(f"❌ 이적 실패: {e}")
+
+# ---------- 팀 삭제: 해당 팀의 선수들을 FA로 돌리고 팀 문서를 삭제 ----------
+@bot.command(name="팀삭제")
+async def delete_team_cmd(ctx, *, teamname: str):
+    """
+    사용법: !팀삭제 팀명
+    - 팀명을 정규화하여 해당 팀 문서를 조회
+    - 해당 팀의 로스터에 있는 모든 선수들의 team 필드를 "FA"로 변경하고 updated_at 갱신
+    - FA 팀 문서의 roster에 해당 선수들 추가
+    - 원래 팀 문서를 삭제
+    - 결과 요약 임베드 전송
+    """
+    if not await ensure_db_or_warn(ctx): return
+    team_norm = normalize_team_name(teamname)
+    t_ref = team_doc_ref(team_norm)
+    t_doc = t_ref.get()
+    if not t_doc.exists:
+        await ctx.send(f"❌ 팀 `{team_norm}` 이(가) 존재하지 않습니다.")
+        return
+
+    try:
+        t_data = t_doc.to_dict() or {}
+        roster = t_data.get("roster", []) or []
+        moved = []
+        errors = []
+
+        # ensure FA team exists
+        fa_ref = team_doc_ref("FA")
+        fa_ref.set({"name": "FA", "created_at": now_iso()}, merge=True)
+
+        for nick_norm in roster:
+            try:
+                # nick_norm stored is normalized (lowercase). player_doc_ref will normalize again, safe.
+                p_ref = player_doc_ref(nick_norm)
+                p_doc = p_ref.get()
+                if not p_doc.exists:
+                    errors.append(f"{nick_norm}: 선수 데이터 없음")
+                    continue
+                # update player -> team 'FA'
+                p_ref.update({"team": "FA", "updated_at": now_iso()})
+                # add to FA roster
+                fa_ref.update({"roster": firestore.ArrayUnion([normalize_nick(nick_norm)])})
+                moved.append(nick_norm)
+            except Exception as e:
+                errors.append(f"{nick_norm}: {e}")
+
+        # delete the team document
+        t_ref.delete()
+
+        # compose embed summary
+        embed = discord.Embed(title="팀 삭제 완료", description=f"팀 `{team_norm}` 을(를 삭제하고 해당 선수들을 FA로 이동했습니다.", timestamp=datetime.now(timezone.utc))
+        embed.add_field(name="원팀", value=team_norm, inline=False)
+        embed.add_field(name="이동(FA) 수", value=str(len(moved)), inline=True)
+        embed.add_field(name="오류 수", value=str(len(errors)), inline=True)
+        if moved:
+            embed.add_field(name="이동된 선수 (최대 50)", value=", ".join(moved[:50]), inline=False)
+        if errors:
+            embed.add_field(name="오류 예시 (최대 10)", value="\n".join(errors[:10]), inline=False)
+            embed.colour = discord.Color.red()
+        else:
+            embed.colour = discord.Color.green()
+        await ctx.send(embed=embed)
+    except Exception as e:
+        await ctx.send(f"❌ 팀 삭제 중 오류 발생: {e}")
 
 # ---------- 나머지 명령들 (수정/닉변/삭제/구종삭제/팀/목록/트레이드/웨이버/방출/기록) ----------
 @bot.command(name="수정")
