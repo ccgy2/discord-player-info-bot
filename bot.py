@@ -2,13 +2,16 @@
 """
 Discord + Firebase (Firestore) Baseball Player Manager Bot
 - Python 3.8+
-- discord.py 기반 명령형 봇
+- discord.py based commands
 - Firestore collections: players, teams, records, aliases
-- 주요 변경:
-  - 블록(개행) 기반 선수 입력 지원 (닉네임(팔각도) + 다음줄: 구종 ...)
-  - 팔각도(폼) 없어도 등록 가능
-  - 닉변 이전 이름으로 입력해도 현재 닉네임으로 등록되는 alias 매핑 지원
-  - 기존 기능(마인크래프트 검증, Minotar 스킨, 임베드 요약, 파일가져오기 중복모드 등) 유지
+- Features included:
+  * 블록/파이프 기반 등록/추가/수정/파일가져오기
+  * Mojang username 검사(옵션)
+  * Minotar 스킨(avatar, body) 임베드 포함
+  * 닉변(aliases) 지원
+  * !추가: 기존 선수에 구종 append(중복 제거, 기본값 부여)
+  * 구종 숫자 없을 경우 기본값 자동 부여 (DEFAULT_PITCH_POWER)
+  * 임베드 시 등록자 아바타, 깔끔한 필드 재배치, 팀 기반 색상 매핑
 """
 
 import os
@@ -27,7 +30,7 @@ from discord.ext import commands
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-# dotenv (개발 환경)
+# dotenv (개발 환경에서 사용)
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -39,12 +42,17 @@ BOT_PREFIX = os.getenv("BOT_PREFIX", "!")
 INTENTS = discord.Intents.default()
 INTENTS.message_content = True
 
+# 마인크래프트 닉네임 검증을 끄고 싶으면 VERIFY_MC=false 환경변수 설정
 VERIFY_MC = os.getenv("VERIFY_MC", "true").lower() not in ("0", "false", "no", "off")
+
+# 구종에 숫자 없을때 기본 수치
+DEFAULT_PITCH_POWER = int(os.getenv("DEFAULT_PITCH_POWER", "20"))
 
 bot = commands.Bot(command_prefix=BOT_PREFIX, intents=INTENTS, help_command=None)
 
 # ---------- Firebase 초기화 ----------
 def init_firebase():
+    # 이미 초기화 되어 있으면 기존 client 반환
     if firebase_admin._apps:
         return firestore.client()
 
@@ -118,9 +126,7 @@ async def ensure_db_or_warn(ctx):
 # ---------- Alias (닉변 이전 이름 -> 현재 닉네임) ----------
 def resolve_nick(nick: str) -> str:
     """
-    닉네임 또는 이전 닉네임(aliases)에 대해 실제(현재) 닉네임 문서 ID를 반환.
-    - aliases 컬렉션에 normalized old nick의 doc이 있으면 그 'current' 값을 사용.
-    - 없으면 입력 닉네임(normalized)을 그대로 반환.
+    닉네임 또는 이전 닉네임(aliases)에 대해 canonical(정규화된) 닉 반환.
     """
     try:
         norm = normalize_nick(nick)
@@ -133,10 +139,9 @@ def resolve_nick(nick: str) -> str:
                 return normalize_nick(cur)
         return norm
     except Exception:
-        # DB 문제나 기타 경우 원래 닉 그대로 반환
         return normalize_nick(nick)
 
-# ---------- Firestore 참조 헬퍼 (resolve_nick 사용) ----------
+# ---------- Firestore 참조 헬퍼 ----------
 def player_doc_ref(nick: str):
     canonical = resolve_nick(nick)
     return db.collection("players").document(canonical)
@@ -196,42 +201,105 @@ def safe_avatar_urls(nick: str):
     except Exception:
         return None, None
 
-# ---------- 임베드 도우미 ----------
-def format_registrar_field(created_by: dict) -> str:
+# ---------- 구종(파워) 처리 유틸 ----------
+def pitch_base_name(pitch: str) -> str:
+    """ '포심(40)' -> '포심', '포심' -> '포심' """
+    m = re.match(r'^([^\(]+)', pitch)
+    return m.group(1).strip() if m else pitch.strip()
+
+def pitch_has_power(pitch: str) -> bool:
+    return bool(re.search(r'\(\s*\d+\s*\)$', pitch))
+
+def normalize_pitch_token(tok: str) -> str:
+    """
+    입력 토큰을 정규화:
+    - 쉼표 제거
+    - 숫자 없는 경우 기본값 부여: 포심 -> 포심(20)
+    - 이미 숫자 있으면 공백 제거 후 그대로 반환
+    """
+    if not tok:
+        return ""
+    t = tok.strip().rstrip(",")
+    if pitch_has_power(t):
+        return re.sub(r'\s+', '', t)
+    # 숫자 없음 -> 기본값 추가
+    base = pitch_base_name(t)
+    return f"{base}({DEFAULT_PITCH_POWER})"
+
+# ---------- 임베드 컬러 결정 (팀 기반 또는 기본 매핑) ----------
+def color_for_team(team: str) -> discord.Color:
+    if not team:
+        return discord.Color.dark_grey()
+    # 간단한 해시로 0xRRGGBB 생성 (밝기 조절)
+    h = abs(hash(team)) & 0xFFFFFF
+    # discord.Color expects an integer 0..0xFFFFFF
+    return discord.Color(h)
+
+# ---------- 임베드 도우미 개선 ----------
+def format_registrar_field_and_avatar(created_by: dict) -> (str, Optional[str]):
     if not created_by:
-        return "-"
+        return "-", None
     uid = created_by.get("id", "-")
     display = created_by.get("display_name") or created_by.get("name") or "-"
     discr = created_by.get("discriminator")
+    avatar_url = created_by.get("avatar_url")
     if discr:
         name_repr = f"{display} ({created_by.get('name','')}{('#'+discr)})"
     else:
         name_repr = f"{display}"
-    return f"{name_repr}\nID: {uid}"
+    return f"{name_repr}\nID: {uid}", avatar_url
 
-def make_player_embed(data: dict, include_body: bool = True) -> discord.Embed:
+def make_player_embed(data: dict, context: Optional[dict] = None) -> discord.Embed:
+    """
+    data: player document dict
+    context: optional dict, e.g., {"action":"create"/"append"/"edit"} to choose color
+    """
     nickname = data.get('nickname', '-')
-    title = f"{nickname} ({data.get('form','-')})"
     team = data.get('team','Free') or "Free"
-    embed = discord.Embed(title=title, description=f"[{team}]", timestamp=datetime.now(timezone.utc))
-    embed.add_field(name="이름", value=data.get('name','-'), inline=True)
-    embed.add_field(name="포지션", value=data.get('position','-'), inline=True)
-    pitch_types = data.get('pitch_types', [])
+    form = data.get('form','-') or '-'
+    position = data.get('position','-') or '-'
+    pitch_types = data.get('pitch_types', []) or []
+    # nice human readable pitches: each on new line (limit)
     if pitch_types:
-        embed.add_field(name="구종", value=", ".join(pitch_types[:10]), inline=False)
+        pitches_display = "\n".join([f"- {p}" for p in (pitch_types[:20])])
     else:
-        embed.add_field(name="구종", value="-", inline=False)
-    reg_info = format_registrar_field(data.get("created_by", {}))
-    embed.add_field(name="등록자", value=reg_info, inline=True)
-    embed.set_footer(text=f"등록: {short_time(data.get('created_at','-'))}  수정: {short_time(data.get('updated_at','-'))}")
+        pitches_display = "-"
+
+    color = color_for_team(team)
+
+    title = f"{nickname}"
+    embed = discord.Embed(title=title, description=f"[{team}] {form}", color=color, timestamp=datetime.now(timezone.utc))
+    # set author as registrant if available
+    reg_text, reg_avatar = format_registrar_field_and_avatar(data.get("created_by", {}))
+    if reg_text:
+        # author's name shown at top-left with avatar
+        embed.set_author(name=f"등록자: {reg_text.splitlines()[0]}", icon_url=reg_avatar)
+
+    # 핵심 정보: left column
+    embed.add_field(name="포지션", value=position, inline=True)
+    embed.add_field(name="폼", value=form, inline=True)
+    # pitch list as its own field
+    embed.add_field(name=f"구종 ({len(pitch_types)})", value=pitches_display, inline=False)
+
+    # meta
+    created = data.get('created_at', '-')
+    updated = data.get('updated_at', '-')
+    embed.set_footer(text=f"등록: {short_time(created)}  수정: {short_time(updated)}")
+
+    # thumbnail & image (mc skin)
     try:
         avatar_url, body_url = safe_avatar_urls(nickname)
         if avatar_url:
             embed.set_thumbnail(url=avatar_url)
-        if include_body and body_url:
+        if body_url:
             embed.set_image(url=body_url)
     except Exception:
         pass
+
+    # add extra small note
+    if context and context.get("note"):
+        embed.add_field(name="메모", value=context.get("note"), inline=False)
+
     return embed
 
 # ---------- 헬프 ----------
@@ -247,7 +315,8 @@ async def send_help_text(ctx):
 
 **등록/추가/대량등록**
 `{BOT}등록` - 여러 블록(개행)으로 붙여넣어 등록. (예: 닉네임 (폼) \\n 구종...)
-`{BOT}추가 nick|이름|팀|포지션|구종1,구종2|폼` - 한 명 추가
+`{BOT}추가 nick|이름|팀|포지션|구종1,구종2|폼` - 한 명 추가 (파이프 형식)
+`{BOT}추가 nick\\n구종 구종` - 닉네임 + 다음 라인 구종 형식도 가능. (이미 존재하면 구종을 append)
 
 **파일 가져오기**
 `{BOT}가져오기파일 [팀명] [모드]` - 첨부된 .txt/.csv 파일을 블록으로 읽어 등록
@@ -255,7 +324,10 @@ async def send_help_text(ctx):
   - [모드]: 빈칸 또는 'skip'/'건너뛰기' (기본) 또는 '덮어쓰기'/'overwrite'
 
 **수정/닉변/삭제/영입/이적**
-`{BOT}수정 닉네임 필드 새값`  
+`{BOT}수정 nick field value` - 단일 필드 수정 (기존)
+블록형: {BOT}수정 nick (언더핸드) [팀 이름]
+구종 구종, 구종
+- 블록형으로 보내면 해당 선수의 폼/구종/포지션/팀을 **교체**(단, 팀/폼 미기재 시 기존값 유지).
 `{BOT}닉변 옛닉 새닉` - 닉변 시 aliases에 옛닉→새닉 매핑을 남깁니다.
 `{BOT}삭제 닉네임`  
 `{BOT}영입 닉네임 팀명`  
@@ -289,10 +361,6 @@ async def help_kor2(ctx):
 
 # ---------- 파서 유틸: 블록 기반 파싱 ----------
 def split_into_blocks(text: str) -> List[List[str]]:
-    """
-    텍스트를 빈 줄(하나 이상) 기준으로 블록으로 나눔.
-    각 블록은 여러 라인(리스트)로 반환.
-    """
     raw_blocks = re.split(r'\n\s*\n', text.strip(), flags=re.MULTILINE)
     blocks = []
     for b in raw_blocks:
@@ -303,92 +371,80 @@ def split_into_blocks(text: str) -> List[List[str]]:
 
 def parse_pitch_line(pitch_line: str) -> List[str]:
     """
-    구종 라인 파싱:
-    - 토큰을 공백으로 분리
-    - '커브(20)' 같은 형식 유지
-    - '포심' 과 같이 숫자 없는 경우도 허용 (그대로 '포심')
+    구종 라인 파싱 & 정규화:
+    - 토큰을 공백으로 분리 (쉼표 허용)
+    - 숫자 없는 경우 DEFAULT_PITCH_POWER 추가
+    - 결과 예: 포심(20), 슬라이더(40)
     """
-    tokens = [t.strip() for t in pitch_line.split() if t.strip()]
+    tokens = [t.strip().rstrip(",") for t in re.split(r'\s+', pitch_line.strip()) if t.strip()]
     out = []
     for tok in tokens:
-        # allow multiple formats like 포심(40), 포심, 포심(40), 스플리터(30)
-        if re.match(r'^[^\s()]+\( ?\d+ ?\)$', tok):
-            out.append(tok.replace(" ", ""))
-        else:
-            out.append(tok)
+        norm = normalize_pitch_token(tok)
+        if norm:
+            out.append(norm)
     return out
 
 def parse_block_to_player(block_lines: List[str]):
     """
     블록(2개 이상의 라인 또는 1라인)을 선수 데이터로 변환.
-    반환: dict with keys: nickname, name, team, position, pitch_types(list), form
+    반환: dict with keys: nickname, name, team (or None), position, pitch_types(list), form
     """
-    # 기본값
     nickname = ""
     name = ""
-    team = "Free"
+    team = None  # None => 미기재 (호출부가 기존값 유지 결정)
     position = "N/A"
     pitch_types = []
     form = ""
 
-    # 1) 파이프 형식 단일 라인 처리 (nick|이름|팀|포지션|구종...|폼)
+    # 파이프 형식(한 줄) 처리
     if len(block_lines) == 1 and '|' in block_lines[0]:
         parts = block_lines[0].split("|")
         if len(parts) >= 1:
             nickname = parts[0].strip()
         if len(parts) >= 2:
             name = parts[1].strip()
-        if len(parts) >= 3 and parts[2].strip():
-            team = normalize_team_name(parts[2].strip())
+        if len(parts) >= 3:
+            t = parts[2].strip()
+            team = normalize_team_name(t) if t else None
         if len(parts) >= 4 and parts[3].strip():
             position = parts[3].strip()
         if len(parts) >= 5 and parts[4].strip():
-            pitch_types = [p.strip() for p in parts[4].split(",") if p.strip()]
+            pitch_types = [normalize_pitch_token(p.strip()) for p in parts[4].split(",") if p.strip()]
         if len(parts) >= 6 and parts[5].strip():
             form = parts[5].strip()
         if not name:
             name = nickname
         return {"nickname": nickname, "name": name, "team": team, "position": position, "pitch_types": pitch_types, "form": form}
 
-    # 2) 라인 기반: 첫 라인에 '닉네임 (폼) [팀]' 형태 가능, 이후 라인들은 구종
+    # 라인 기반 파싱
     first = block_lines[0]
-    # 닉네임 추출 (첫 단어 또는 괄호 처리)
-    # form: (언더핸드) 같은 괄호
     form_match = re.search(r'\(([^)]*)\)', first)
     team_match = re.search(r'\[([^\]]*)\]', first)
-    # nickname is first token (until space) or entire line before '(' or '['
-    nick_token = first.split()[0] if first.split() else first
-    # if first contains '[' or '(' which might be attached to nickname, do:
-    # try extracting nickname via regex: ^([^\s\(\[]+)
     m = re.match(r'^([^\s\(\[]+)', first)
     if m:
         nickname = m.group(1).strip()
     else:
         nickname = first.strip()
-
     if form_match:
         form = form_match.group(1).strip()
     if team_match:
         team = normalize_team_name(team_match.group(1).strip())
 
-    # name default to nickname
     name = nickname
 
-    # collect pitch lines (all remaining lines concatenated)
+    # pitch lines: 나머지 라인 전부 합쳐서 파싱
     if len(block_lines) >= 2:
         pitch_text = " ".join(block_lines[1:])
         pitch_types = parse_pitch_line(pitch_text)
     else:
-        # 간혹 두번째 라인이 없이 한 라인만 있는 경우, 첫라인 안에 구종이 붙어있을 수도 있음.
-        # 예: "nick 포심(40) 슬라이더(20)" 형태
+        # 한 라인에 구종이 함께 있는 경우(예: nick 포심(40) 슬라이더(20) )
         rest = first[len(nickname):].strip()
+        # 제거: 폼, 팀 표기
+        rest = re.sub(r'\([^\)]*\)', '', rest)
+        rest = re.sub(r'\[[^\]]*\]', '', rest)
+        rest = rest.strip()
         if rest:
-            # remove form/team parts if present
-            rest = re.sub(r'\([^\)]*\)', '', rest)
-            rest = re.sub(r'\[[^\]]*\]', '', rest)
-            rest = rest.strip()
-            if rest:
-                pitch_types = parse_pitch_line(rest)
+            pitch_types = parse_pitch_line(rest)
 
     return {"nickname": nickname, "name": name, "team": team, "position": position, "pitch_types": pitch_types, "form": form}
 
@@ -401,7 +457,7 @@ async def info_cmd(ctx, nick: str):
         await ctx.send(f"❌ `{nick}` 선수가 존재하지 않습니다.")
         return
     d = doc.to_dict()
-    embed = make_player_embed(d, include_body=True)
+    embed = make_player_embed(d)
     await ctx.send(embed=embed)
 
 @bot.command(name="정보상세")
@@ -412,91 +468,191 @@ async def info_detail_cmd(ctx, nick: str):
         await ctx.send(f"❌ `{nick}` 선수가 존재하지 않습니다.")
         return
     d = doc.to_dict()
-    pitch_types = d.get("pitch_types", [])
-    form = d.get("form","-")
-    extra = d.get("extra","-")
-    embed = discord.Embed(title=f"{d.get('nickname','-')} — 상세 정보", timestamp=datetime.now(timezone.utc))
-    embed.add_field(name="이름", value=d.get('name','-'), inline=True)
-    embed.add_field(name="팀", value=d.get('team','-'), inline=True)
-    embed.add_field(name="포지션", value=d.get('position','-'), inline=True)
-    embed.add_field(name="구종", value=", ".join(pitch_types) if pitch_types else "-", inline=False)
-    embed.add_field(name="폼", value=form, inline=True)
-    embed.add_field(name="추가정보", value=str(extra), inline=False)
-    embed.set_footer(text=f"등록: {short_time(d.get('created_at','-'))}  수정: {short_time(d.get('updated_at','-'))}")
-    reg_info = format_registrar_field(d.get("created_by", {}))
-    embed.add_field(name="등록자", value=reg_info, inline=True)
-    try:
-        avatar_url, body_url = safe_avatar_urls(d.get('nickname',''))
-        if avatar_url:
-            embed.set_thumbnail(url=avatar_url)
-        if body_url:
-            embed.set_image(url=body_url)
-    except Exception:
-        pass
+    embed = make_player_embed(d)
+    # 상세 필드 추가
+    extra = d.get("extra", {})
+    if extra:
+        embed.add_field(name="추가정보", value=json.dumps(extra, ensure_ascii=False), inline=False)
     await ctx.send(embed=embed)
 
-# ---------- 단일 추가 (파이프 형식) ----------
+# ---------- 단일 추가 (파이프 or 멀티라인 지원, append 동작 when existing) ----------
 @bot.command(name="추가")
 async def add_one_cmd(ctx, *, payload: str):
+    """
+    지원 형식:
+    1) 파이프: nick|이름|팀|포지션|구종1,구종2|폼
+    2) 멀티라인: 첫 줄에 nick (또는 nick (폼) [팀]), 다음줄에 구종들
+       - 예: "Summ3r_ (언더핸드) [웨어 울브스]\n포심(20) 슬라이더(40)"
+       - 기존 선수 문서가 있으면 구종을 append(덧붙임), 숫자 없는 구종은 DEFAULT_PITCH_POWER 부여
+    """
     if not await ensure_db_or_warn(ctx): return
-    parts = payload.split("|")
-    if len(parts) < 4:
-        await ctx.send("❌ 형식 오류. 예시: `!추가 nick|이름|팀|포지션|구종1,구종2|폼`")
+    if not payload or not payload.strip():
+        await ctx.send("❌ 형식 오류. 예: `!추가 nick|이름|팀|포지션|구종1,구종2|폼` 또는 멀티라인 형식.")
         return
-    raw_nick = parts[0].strip()
-    # resolve alias -> canonical
-    target_norm = resolve_nick(raw_nick)
-    nick_to_use = target_norm  # doc id (normalized)
-    name = parts[1].strip() or raw_nick
-    team = normalize_team_name(parts[2].strip())
-    position = parts[3].strip()
-    pitch_types = []
-    form = ""
-    if len(parts) >= 5 and parts[4].strip():
-        pitch_types = [p.strip() for p in parts[4].split(",") if p.strip()]
-    if len(parts) >= 6:
-        form = parts[5].strip()
 
-    if VERIFY_MC:
-        valid = await is_mc_username(raw_nick)
-        if not valid:
-            await ctx.send(f"❌ `{raw_nick}` 는(은) 유효한 마인크래프트 계정명이 아닙니다. 등록이 취소되었습니다.")
-            return
-
+    # prepare created_by with avatar if possible
     author = ctx.author
+    avatar_url = None
+    try:
+        avatar_url = getattr(author, "display_avatar").url
+    except Exception:
+        try:
+            avatar_url = author.avatar.url
+        except Exception:
+            avatar_url = None
     created_by = {
         "id": getattr(author, "id", None),
         "name": getattr(author, "name", ""),
         "discriminator": getattr(author, "discriminator", None),
-        "display_name": getattr(author, "display_name", getattr(author, "name", ""))
+        "display_name": getattr(author, "display_name", getattr(author, "name", "")),
+        "avatar_url": avatar_url
     }
 
-    doc_ref = db.collection("players").document(nick_to_use)
-    data = {
-        "nickname": raw_nick if nick_to_use == normalize_nick(raw_nick) else nick_to_use,
-        "name": name,
-        "team": team or "Free",
-        "position": position,
-        "pitch_types": pitch_types,
-        "form": form,
-        "extra": {},
-        "created_at": now_iso(),
-        "updated_at": now_iso(),
-        "created_by": created_by
-    }
-    try:
-        doc_ref.set(data)
-        if team:
-            t_ref = team_doc_ref(team)
-            t_ref.set({"name": team, "created_at": now_iso()}, merge=True)
-            t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(nick_to_use)])})
-        embed = make_player_embed(data, include_body=True)
-        embed.colour = discord.Color.green()
-        await ctx.send(content="✅ 선수 추가 완료", embed=embed)
-    except Exception as e:
-        await ctx.send(f"❌ 추가 실패: {e}")
+    lines = [l for l in payload.splitlines() if l.strip()]
+    # 파이프 형식 우선 처리
+    if len(lines) == 1 and '|' in lines[0]:
+        parts = lines[0].split("|")
+        if len(parts) < 4:
+            await ctx.send("❌ 파이프 형식 오류. 예: `!추가 nick|이름|팀|포지션|구종1,구종2|폼`")
+            return
+        raw_nick = parts[0].strip()
+        target_norm = resolve_nick(raw_nick)
+        nick_docid = target_norm
+        name = parts[1].strip() or raw_nick
+        team_val = parts[2].strip()
+        team = normalize_team_name(team_val) if team_val else None
+        position = parts[3].strip()
+        pitch_types = []
+        form = ""
+        if len(parts) >= 5 and parts[4].strip():
+            pitch_types = [normalize_pitch_token(p.strip()) for p in parts[4].split(",") if p.strip()]
+        if len(parts) >= 6:
+            form = parts[5].strip()
 
-# ---------- 블록(개행) 기반 대량 등록 ----------
+        doc_ref = db.collection("players").document(nick_docid)
+        exists = doc_ref.get().exists
+
+        # MC 검증: 신규 생성의 경우만 검증
+        if VERIFY_MC and not exists:
+            valid = await is_mc_username(raw_nick)
+            if not valid:
+                await ctx.send(f"❌ `{raw_nick}` 는(은) 유효한 마인크래프트 계정명이 아닙니다. 등록이 취소되었습니다.")
+                return
+
+        author = ctx.author
+        created_by = {
+            "id": getattr(author, "id", None),
+            "name": getattr(author, "name", ""),
+            "discriminator": getattr(author, "discriminator", None),
+            "display_name": getattr(author, "display_name", getattr(author, "name", ""))
+        }
+
+        # 기존이면 파이프 형식은 전체 덮어쓰기 (사용자가 전체 정보를 준다고 가정)
+        data = {
+            "nickname": raw_nick if nick_docid == normalize_nick(raw_nick) else nick_docid,
+            "name": name,
+            "team": team or "Free",
+            "position": position,
+            "pitch_types": pitch_types,
+            "form": form,
+            "extra": {},
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+            "created_by": created_by
+        }
+        try:
+            doc_ref.set(data)
+            if data["team"]:
+                t_ref = team_doc_ref(data["team"])
+                t_ref.set({"name": data["team"], "created_at": now_iso()}, merge=True)
+                t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(nick_docid)])})
+            embed = make_player_embed(data, context={"note": "파이프 형식 전체 등록/덮어쓰기"})
+            await ctx.send(content="✅ 선수 추가 완료", embed=embed)
+        except Exception as e:
+            await ctx.send(f"❌ 추가 실패: {e}")
+        return
+
+    # 멀티라인(또는 단일 라인지만 공백형식) 처리: parse_block_to_player로 파싱
+    block_lines = lines
+    parsed = parse_block_to_player(block_lines)
+    raw_nick = parsed["nickname"]
+    target_norm = resolve_nick(raw_nick)
+    doc_ref = db.collection("players").document(target_norm)
+    exists = doc_ref.get().exists
+
+    # If exists, append pitch types; if not, create new with provided info (team may be None -> default Free)
+    if exists:
+        try:
+            existing = doc_ref.get().to_dict() or {}
+            existing_pitches = existing.get("pitch_types", [])
+            new_pitches = parsed.get("pitch_types", [])
+            # append unique by base name (ignore number when comparing)
+            appended = existing_pitches[:]
+            existing_bases = [pitch_base_name(p) for p in appended]
+            for p in new_pitches:
+                base = pitch_base_name(p)
+                if base not in existing_bases:
+                    appended.append(p)
+                    existing_bases.append(base)
+            doc_ref.update({"pitch_types": appended, "updated_at": now_iso()})
+            # if parsed includes form or team and they are provided, update them optionally
+            updates = {}
+            if parsed.get("form"):
+                updates["form"] = parsed.get("form")
+            if parsed.get("team") is not None:
+                updates["team"] = parsed.get("team") or "Free"
+            if updates:
+                updates["updated_at"] = now_iso()
+                doc_ref.update(updates)
+            # ensure roster contains player
+            team_now = (parsed.get("team") or existing.get("team") or "Free")
+            t_ref = team_doc_ref(team_now)
+            t_ref.set({"name": team_now, "created_at": now_iso()}, merge=True)
+            t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(target_norm)])})
+            embed = make_player_embed(doc_ref.get().to_dict(), context={"note": "구종이 기존에 추가되었습니다."})
+            await ctx.send(content=f"✅ `{target_norm}` 에 구종 추가 완료", embed=embed)
+        except Exception as e:
+            await ctx.send(f"❌ 구종 추가 실패: {e}")
+        return
+    else:
+        # 신규 생성
+        if VERIFY_MC:
+            valid = await is_mc_username(raw_nick)
+            if not valid:
+                await ctx.send(f"❌ `{raw_nick}` 는(은) 유효한 마인크래프트 계정명이 아닙니다. 등록이 취소되었습니다.")
+                return
+        author = ctx.author
+        created_by = {
+            "id": getattr(author, "id", None),
+            "name": getattr(author, "name", ""),
+            "discriminator": getattr(author, "discriminator", None),
+            "display_name": getattr(author, "display_name", getattr(author, "name", ""))
+        }
+        data = {
+            "nickname": raw_nick,
+            "name": parsed.get("name", raw_nick),
+            "team": parsed.get("team") or "Free",
+            "position": parsed.get("position", "N/A"),
+            "pitch_types": parsed.get("pitch_types", []),
+            "form": parsed.get("form", ""),
+            "extra": {},
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+            "created_by": created_by
+        }
+        try:
+            doc_ref.set(data)
+            if data["team"]:
+                t_ref = team_doc_ref(data["team"])
+                t_ref.set({"name": data["team"], "created_at": now_iso()}, merge=True)
+                t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(target_norm)])})
+            embed = make_player_embed(data, context={"note": "신규 등록"})
+            await ctx.send(content="✅ 신규 선수 등록 완료", embed=embed)
+        except Exception as e:
+            await ctx.send(f"❌ 등록 실패: {e}")
+        return
+
+# ---------- 블록(개행) 기반 대량 등록 (동작 유지) ----------
 @bot.command(name="등록")
 async def bulk_register_cmd(ctx, *, bulk_text: str = None):
     """
@@ -504,8 +660,6 @@ async def bulk_register_cmd(ctx, *, bulk_text: str = None):
     블록 예시:
       Ciel_Tempest (언더핸드)
       포심(20) 슬라이더(40) 너클커브(40)
-
-    또는 파이프 형식: nick|이름|팀|포지션|구종1,구종2|폼
     """
     if not await ensure_db_or_warn(ctx): return
     if not bulk_text:
@@ -513,11 +667,20 @@ async def bulk_register_cmd(ctx, *, bulk_text: str = None):
         return
 
     author = ctx.author
+    avatar_url = None
+    try:
+        avatar_url = getattr(author, "display_avatar").url
+    except Exception:
+        try:
+            avatar_url = author.avatar.url
+        except Exception:
+            avatar_url = None
     created_by = {
         "id": getattr(author, "id", None),
         "name": getattr(author, "name", ""),
         "discriminator": getattr(author, "discriminator", None),
-        "display_name": getattr(author, "display_name", getattr(author, "name", ""))
+        "display_name": getattr(author, "display_name", getattr(author, "name", "")),
+        "avatar_url": avatar_url
     }
 
     blocks = split_into_blocks(bulk_text)
@@ -527,37 +690,47 @@ async def bulk_register_cmd(ctx, *, bulk_text: str = None):
         try:
             p = parse_block_to_player(block)
             raw_nick = p["nickname"]
-            # resolve alias -> canonical
             target_norm = resolve_nick(raw_nick)
-            nick_docid = target_norm
-            # validate MC name
-            if VERIFY_MC:
+            doc_ref = db.collection("players").document(target_norm)
+            exists = doc_ref.get().exists
+
+            # MC validation only if new
+            if VERIFY_MC and not exists:
                 valid = await is_mc_username(raw_nick)
                 await asyncio.sleep(0.08)
                 if not valid:
                     errors.append(f"블록 {i}: `{raw_nick}` 은(는) 마인크래프트 계정 아님")
                     continue
-            # prepare data
+
+            # determine team: if p['team'] is None -> if exists keep old team, else Free
+            if exists:
+                old = doc_ref.get().to_dict() or {}
+                team_val = p.get("team") if p.get("team") is not None else old.get("team", "Free")
+                created_at_val = old.get("created_at", now_iso())
+                created_by_val = old.get("created_by", created_by)
+            else:
+                team_val = p.get("team") or "Free"
+                created_at_val = now_iso()
+                created_by_val = created_by
+
             data = {
-                "nickname": raw_nick if nick_docid == normalize_nick(raw_nick) else nick_docid,
+                "nickname": raw_nick if target_norm == normalize_nick(raw_nick) else target_norm,
                 "name": p.get("name", raw_nick),
-                "team": p.get("team","Free") or "Free",
+                "team": team_val,
                 "position": p.get("position","N/A"),
                 "pitch_types": p.get("pitch_types", []),
                 "form": p.get("form",""),
                 "extra": {},
-                "created_at": now_iso(),
+                "created_at": created_at_val,
                 "updated_at": now_iso(),
-                "created_by": created_by
+                "created_by": created_by_val
             }
-            doc_ref = db.collection("players").document(nick_docid)
             doc_ref.set(data)
-            # team roster update
             if data["team"]:
                 t_ref = team_doc_ref(data["team"])
                 t_ref.set({"name": data["team"], "created_at": now_iso()}, merge=True)
-                t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(nick_docid)])})
-            added.append(nick_docid)
+                t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(target_norm)])})
+            added.append(target_norm)
         except Exception as e:
             errors.append(f"블록 {i}: {e}")
 
@@ -623,11 +796,20 @@ async def import_file_cmd(ctx, *, args: str = ""):
         return
 
     author = ctx.author
+    avatar_url = None
+    try:
+        avatar_url = getattr(author, "display_avatar").url
+    except Exception:
+        try:
+            avatar_url = author.avatar.url
+        except Exception:
+            avatar_url = None
     created_by = {
         "id": getattr(author, "id", None),
         "name": getattr(author, "name", ""),
         "discriminator": getattr(author, "discriminator", None),
-        "display_name": getattr(author, "display_name", getattr(author, "name", ""))
+        "display_name": getattr(author, "display_name", getattr(author, "name", "")),
+        "avatar_url": avatar_url
     }
 
     blocks = split_into_blocks(text)
@@ -654,11 +836,17 @@ async def import_file_cmd(ctx, *, args: str = ""):
                 if old and old.get("created_at"):
                     created_at_val = old.get("created_at")
 
-            # team override
-            team = team_override if team_override else p.get("team","Free")
+            # team override or p['team'] None => if exists keep old team else default Free
+            if team_override:
+                team_val = team_override
+            else:
+                if exists:
+                    team_val = p.get("team") if p.get("team") is not None else (old.get("team", "Free") if old else "Free")
+                else:
+                    team_val = p.get("team") or "Free"
 
-            # MC name check
-            if VERIFY_MC:
+            # MC name check only on new creation
+            if VERIFY_MC and not exists:
                 valid = await is_mc_username(raw_nick)
                 await asyncio.sleep(0.08)
                 if not valid:
@@ -668,7 +856,7 @@ async def import_file_cmd(ctx, *, args: str = ""):
             data_obj = {
                 "nickname": raw_nick if target_norm == normalize_nick(raw_nick) else target_norm,
                 "name": p.get("name", raw_nick),
-                "team": team or "Free",
+                "team": team_val or "Free",
                 "position": p.get("position","N/A"),
                 "pitch_types": p.get("pitch_types", []),
                 "form": p.get("form",""),
@@ -679,9 +867,9 @@ async def import_file_cmd(ctx, *, args: str = ""):
             }
 
             doc_ref.set(data_obj)
-            if team:
-                t_ref = team_doc_ref(team)
-                t_ref.set({"name": team, "created_at": now_iso()}, merge=True)
+            if team_val:
+                t_ref = team_doc_ref(team_val)
+                t_ref.set({"name": team_val, "created_at": now_iso()}, merge=True)
                 t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(target_norm)])})
 
             if exists and mode == MODE_OVERWRITE:
@@ -731,17 +919,16 @@ async def nickchange_cmd(ctx, oldnick: str, newnick: str):
     data["nickname"] = newnick
     data["updated_at"] = now_iso()
     try:
-        # create new document, keep the data
         new_ref.set(data)
-        # delete old document
         old_ref.delete()
 
-        # update team roster references
         team = data.get("team")
         if team:
-            t_ref = team_doc_ref(team)
-            t_ref.update({"roster": firestore.ArrayRemove([normalize_nick(oldnick)])})
-            t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(newnick)])})
+            try:
+                team_doc_ref(team).update({"roster": firestore.ArrayRemove([normalize_nick(oldnick)])})
+            except Exception:
+                pass
+            team_doc_ref(team).update({"roster": firestore.ArrayUnion([normalize_nick(newnick)])})
 
         # move records
         rec_old = records_doc_ref(oldnick)
@@ -759,7 +946,105 @@ async def nickchange_cmd(ctx, oldnick: str, newnick: str):
     except Exception as e:
         await ctx.send(f"❌ 닉네임 변경 실패: {e}")
 
-# ---------- 나머지 기존 명령들 (이적/영입/삭제/구종삭제/팀/팀삭제/목록/트레이드/웨이버/방출/기록) ----------
+# ---------- 수정: 단일필드 또는 블록형(전체 교체) ----------
+@bot.command(name="수정")
+async def edit_cmd(ctx, *, payload: str):
+    """
+    사용법:
+    1) 단일필드: !수정 nick field value
+    2) 블록형 교체:
+       !수정 nick (언더핸드) [팀 이름]
+       구종 구종, 구종
+       - 블록에서 팀/폼 미기재 시 기존값 유지
+       - 구종은 블록 파싱 결과로 **완전 교체**
+    """
+    if not await ensure_db_or_warn(ctx): return
+    if not payload or not payload.strip():
+        await ctx.send("❌ 사용법: `!수정 nick field value` 또는 블록형으로 보내세요.")
+        return
+
+    # 블록형 판단: payload에 newline이 있거나 괄호/대괄호 포함되어 블록으로 생각
+    if "\n" in payload or "(" in payload or "[" in payload:
+        # split into lines; ensure first token is the nick
+        lines = [l for l in payload.splitlines() if l.strip()]
+        if not lines:
+            await ctx.send("❌ 블록 형식 오류.")
+            return
+        parsed = parse_block_to_player(lines)
+        raw_nick = parsed["nickname"]
+        doc_ref = db.collection("players").document(resolve_nick(raw_nick))
+        doc = doc_ref.get()
+        if not doc.exists:
+            await ctx.send(f"❌ `{raw_nick}` 선수가 존재하지 않습니다.")
+            return
+        old = doc.to_dict() or {}
+
+        # prepare update: replace fields (form/team/pitch_types/position/name)
+        updates = {}
+        # team: if parsed['team'] is None -> keep old team; else set to parsed team (or Free)
+        if parsed.get("team") is None:
+            updates["team"] = old.get("team", "Free")
+        else:
+            updates["team"] = parsed.get("team") or "Free"
+        # form: if parsed form empty -> keep old form else replace
+        if parsed.get("form"):
+            updates["form"] = parsed.get("form")
+        else:
+            updates["form"] = old.get("form", "")
+        # position/name
+        updates["name"] = parsed.get("name", old.get("name", raw_nick))
+        updates["position"] = parsed.get("position", old.get("position", "N/A"))
+        # pitch_types: replace entirely with parsed list (even if empty)
+        updates["pitch_types"] = parsed.get("pitch_types", [])
+        updates["updated_at"] = now_iso()
+
+        try:
+            doc_ref.update(updates)
+            # team roster fix: if team changed, move roster entries
+            old_team = old.get("team")
+            new_team = updates.get("team")
+            if old_team and old_team != new_team:
+                try:
+                    team_doc_ref(old_team).update({"roster": firestore.ArrayRemove([normalize_nick(doc_ref.id)])})
+                except Exception:
+                    pass
+                t_ref = team_doc_ref(new_team)
+                t_ref.set({"name": new_team, "created_at": now_iso()}, merge=True)
+                t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(doc_ref.id)])})
+            embed = make_player_embed(doc_ref.get().to_dict(), context={"note": "정보가 블록형으로 수정됨"})
+            await ctx.send(content=f"✅ `{doc_ref.id}` 정보가 업데이트 되었습니다.", embed=embed)
+        except Exception as e:
+            await ctx.send(f"❌ 수정 실패: {e}")
+        return
+
+    # 아니면 단일 필드 방식: nick field value
+    parts = payload.strip().split(maxsplit=2)
+    if len(parts) < 3:
+        await ctx.send("❌ 단일 필드 수정 형식: `!수정 nick field value`")
+        return
+    nick, field, value = parts[0], parts[1], parts[2]
+    ref = player_doc_ref(nick)
+    doc = ref.get()
+    if not doc.exists:
+        await ctx.send(f"❌ `{nick}` 가 존재하지 않습니다.")
+        return
+    updates = {}
+    if field.startswith("extra."):
+        key = field.split(".",1)[1]
+        updates[f"extra.{key}"] = value
+    elif field == "pitch_types":
+        types = [normalize_pitch_token(p.strip()) for p in value.split(",") if p.strip()]
+        updates["pitch_types"] = types
+    else:
+        updates[field] = value
+    updates["updated_at"] = now_iso()
+    try:
+        ref.update(updates)
+        await ctx.send(f"✅ `{nick}` 업데이트 성공.")
+    except Exception as e:
+        await ctx.send(f"❌ 업데이트 실패: {e}")
+
+# ---------- 나머지 명령들 (이적/영입/삭제/구종삭제/팀/팀삭제/목록/트레이드/웨이버/방출/기록) ----------
 @bot.command(name="이적")
 async def transfer_cmd(ctx, nick: str, *, newteam: str):
     if not await ensure_db_or_warn(ctx): return
@@ -773,11 +1058,20 @@ async def transfer_cmd(ctx, nick: str, *, newteam: str):
     newteam_norm = normalize_team_name(newteam)
     try:
         author = ctx.author
+        avatar_url = None
+        try:
+            avatar_url = getattr(author, "display_avatar").url
+        except Exception:
+            try:
+                avatar_url = author.avatar.url
+            except Exception:
+                avatar_url = None
         transfer_by = {
             "id": getattr(author, "id", None),
             "name": getattr(author, "name", ""),
             "discriminator": getattr(author, "discriminator", None),
-            "display_name": getattr(author, "display_name", getattr(author, "name", ""))
+            "display_name": getattr(author, "display_name", getattr(author, "name", "")),
+            "avatar_url": avatar_url
         }
 
         p_ref.update({"team": newteam_norm, "updated_at": now_iso(), "last_transfer_by": transfer_by})
@@ -791,15 +1085,14 @@ async def transfer_cmd(ctx, nick: str, *, newteam: str):
         t_ref.set({"name": newteam_norm, "created_at": now_iso()}, merge=True)
         t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(p_ref.id)])})
 
-        embed = discord.Embed(title="선수 이적 완료", timestamp=datetime.now(timezone.utc))
+        embed = discord.Embed(title="선수 이적 완료", color=discord.Color.gold(), timestamp=datetime.now(timezone.utc))
         embed.add_field(name="선수", value=p_ref.id, inline=True)
         embed.add_field(name="이전팀", value=oldteam or "Free", inline=True)
         embed.add_field(name="이적팀", value=newteam_norm, inline=True)
         embed.add_field(name="이적자", value=f"{transfer_by.get('display_name')} (ID: {transfer_by.get('id')})", inline=False)
-        avatar_url, body_url = safe_avatar_urls(p_ref.id)
-        if avatar_url:
-            embed.set_thumbnail(url=avatar_url)
-        embed.colour = discord.Color.gold()
+        avatar_url_mc, _ = safe_avatar_urls(p_ref.id)
+        if avatar_url_mc:
+            embed.set_thumbnail(url=avatar_url_mc)
         await ctx.send(embed=embed)
     except Exception as e:
         await ctx.send(f"❌ 이적 실패: {e}")
@@ -817,11 +1110,20 @@ async def recruit_cmd(ctx, nick: str, *, teamname: str):
     newteam = normalize_team_name(teamname)
     try:
         author = ctx.author
+        avatar_url = None
+        try:
+            avatar_url = getattr(author, "display_avatar").url
+        except Exception:
+            try:
+                avatar_url = author.avatar.url
+            except Exception:
+                avatar_url = None
         updated_by = {
             "id": getattr(author, "id", None),
             "name": getattr(author, "name", ""),
             "discriminator": getattr(author, "discriminator", None),
-            "display_name": getattr(author, "display_name", getattr(author, "name", ""))
+            "display_name": getattr(author, "display_name", getattr(author, "name", "")),
+            "avatar_url": avatar_url
         }
 
         p_ref.update({"team": newteam, "status": None, "updated_at": now_iso(), "last_transfer_by": updated_by})
@@ -834,15 +1136,14 @@ async def recruit_cmd(ctx, nick: str, *, teamname: str):
         t_ref.set({"name": newteam, "created_at": now_iso()}, merge=True)
         t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(p_ref.id)])})
 
-        embed = discord.Embed(title="선수 영입 완료", timestamp=datetime.now(timezone.utc))
+        embed = discord.Embed(title="선수 영입 완료", color=discord.Color.blue(), timestamp=datetime.now(timezone.utc))
         embed.add_field(name="선수", value=p_ref.id, inline=True)
         embed.add_field(name="이전팀", value=oldteam or "Free", inline=True)
         embed.add_field(name="영입팀", value=newteam, inline=True)
         embed.add_field(name="영입자", value=f"{updated_by.get('display_name')} (ID: {updated_by.get('id')})", inline=False)
-        avatar_url, body_url = safe_avatar_urls(p_ref.id)
-        if avatar_url:
-            embed.set_thumbnail(url=avatar_url)
-        embed.colour = discord.Color.blue()
+        avatar_url_mc, _ = safe_avatar_urls(p_ref.id)
+        if avatar_url_mc:
+            embed.set_thumbnail(url=avatar_url_mc)
         await ctx.send(embed=embed)
     except Exception as e:
         await ctx.send(f"❌ 영입 실패: {e}")
@@ -858,7 +1159,7 @@ async def remove_pitch_cmd(ctx, nick: str, pitch: str):
     try:
         d = doc.to_dict()
         current = d.get("pitch_types", [])
-        newlist = [p for p in current if not (p == pitch or p.startswith(pitch+"("))]
+        newlist = [p for p in current if not (p == pitch or pitch_base_name(p) == pitch_base_name(pitch))]
         if len(newlist) == len(current):
             await ctx.send(f"⚠️ `{nick}` 에 `{pitch}` 구종이 없습니다.")
             return
@@ -880,7 +1181,7 @@ async def team_cmd(ctx, *, teamname: str):
     t = t_doc.to_dict()
     roster = t.get("roster", [])
     if roster:
-        await ctx.send(f"**{team_norm}** — 로스터 ({len(roster)}):\n" + ", ".join(roster[:50]))
+        await ctx.send(f"**{team_norm}** — 로스터 ({len(roster)}):\n" + ", ".join(roster[:200]))
     else:
         await ctx.send(f"**{team_norm}** — 로스터가 비어있습니다.")
 
@@ -914,7 +1215,7 @@ async def delete_team_cmd(ctx, *, teamname: str):
             except Exception as e:
                 errors.append(f"{nick_norm}: {e}")
         t_ref.delete()
-        embed = discord.Embed(title="팀 삭제 완료", description=f"팀 `{team_norm}` 을(를) 삭제하고 해당 선수들을 FA로 이동했습니다.", timestamp=datetime.now(timezone.utc))
+        embed = discord.Embed(title="팀 삭제 완료", description=f"팀 `{team_norm}` 을(를) 삭제하고 해당 선수들을 FA로 이동했습니다.", color=discord.Color.red(), timestamp=datetime.now(timezone.utc))
         embed.add_field(name="원팀", value=team_norm, inline=False)
         embed.add_field(name="이동(FA) 수", value=str(len(moved)), inline=True)
         embed.add_field(name="오류 수", value=str(len(errors)), inline=True)
@@ -922,19 +1223,15 @@ async def delete_team_cmd(ctx, *, teamname: str):
             embed.add_field(name="이동된 선수 (최대 50)", value=", ".join(moved[:50]), inline=False)
         if errors:
             embed.add_field(name="오류 예시 (최대 10)", value="\n".join(errors[:10]), inline=False)
-            embed.colour = discord.Color.red()
-        else:
-            embed.colour = discord.Color.green()
         await ctx.send(embed=embed)
     except Exception as e:
         await ctx.send(f"❌ 팀 삭제 중 오류 발생: {e}")
 
-# 목록/삭제/웨이버/방출/트레이드/기록 등 (기존 구현 유지 - 생략없이 포함)
 @bot.command(name="목록")
 async def list_cmd(ctx, kind: str = "players"):
     if not await ensure_db_or_warn(ctx): return
     if kind == "players":
-        docs = db.collection("players").order_by("nickname").limit(200).stream()
+        docs = db.collection("players").order_by("nickname").limit(500).stream()
         lines = []
         for d in docs:
             o = d.to_dict()
@@ -1005,7 +1302,10 @@ async def release_cmd(ctx, nick: str):
     try:
         ref.update({"team": "Free", "status": "released", "updated_at": now_iso()})
         if team:
-            team_doc_ref(team).update({"roster": firestore.ArrayRemove([normalize_nick(ref.id)])})
+            try:
+                team_doc_ref(team).update({"roster": firestore.ArrayRemove([normalize_nick(ref.id)])})
+            except Exception:
+                pass
         await ctx.send(f"✅ `{ref.id}` 이(가) 방출되었습니다.")
     except Exception as e:
         await ctx.send(f"❌ 실패: {e}")
@@ -1023,8 +1323,11 @@ async def delete_cmd(ctx, nick: str):
     try:
         ref.delete()
         if team:
-            t_ref = team_doc_ref(team)
-            t_ref.update({"roster": firestore.ArrayRemove([normalize_nick(ref.id)])})
+            try:
+                t_ref = team_doc_ref(team)
+                t_ref.update({"roster": firestore.ArrayRemove([normalize_nick(ref.id)])})
+            except Exception:
+                pass
         records_doc_ref(nick).delete()
         await ctx.send(f"🗑️ `{ref.id}` 삭제되었습니다.")
     except Exception as e:
@@ -1119,7 +1422,8 @@ async def on_command_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
         await ctx.send("인자가 부족합니다. `!도움` 로 사용법을 확인하세요.")
     elif isinstance(error, commands.CommandNotFound):
-        await ctx.send("알 수 없는 명령어입니다. `!도움` 를 확인하세요.")
+        # ignore unknown commands to avoid spam
+        return
     else:
         await ctx.send(f"명령 실행 중 오류가 발생했습니다: `{error}`")
         print("Unhandled command error:", error)
@@ -1149,3 +1453,5 @@ if __name__ == "__main__":
                 loop.run_until_complete(close_http_session())
         except Exception:
             pass
+
+  
