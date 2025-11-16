@@ -317,6 +317,7 @@ async def send_help_text(ctx):
 `{BOT}등록` - 여러 블록(개행)으로 붙여넣어 등록. (예: 닉네임 (폼) \\n 구종...)
 `{BOT}추가 nick|이름|팀|포지션|구종1,구종2|폼` - 한 명 추가 (파이프 형식)
 `{BOT}추가 nick\\n구종 구종` - 닉네임 + 다음 라인 구종 형식도 가능. (이미 존재하면 구종을 append)
+`{BOT}추가`에 여러 블록을 붙여넣으면 다중 추가 됩니다.
 
 **파일 가져오기**
 `{BOT}가져오기파일 [팀명] [모드]` - 첨부된 .txt/.csv 파일을 블록으로 읽어 등록
@@ -475,7 +476,7 @@ async def info_detail_cmd(ctx, nick: str):
         embed.add_field(name="추가정보", value=json.dumps(extra, ensure_ascii=False), inline=False)
     await ctx.send(embed=embed)
 
-# ---------- 단일 추가 (파이프 or 멀티라인 지원, append 동작 when existing) ----------
+# ---------- 단일/다중 추가 (파이프 or 멀티라인 지원, append 동작 when existing)
 @bot.command(name="추가")
 async def add_one_cmd(ctx, *, payload: str):
     """
@@ -484,13 +485,13 @@ async def add_one_cmd(ctx, *, payload: str):
     2) 멀티라인: 첫 줄에 nick (또는 nick (폼) [팀]), 다음줄에 구종들
        - 예: "Summ3r_ (언더핸드) [웨어 울브스]\n포심(20) 슬라이더(40)"
        - 기존 선수 문서가 있으면 구종을 append(덧붙임), 숫자 없는 구종은 DEFAULT_PITCH_POWER 부여
+    * 이제 payload에 여러 블록(빈줄로 구분)을 넣으면 다중으로 처리합니다.
     """
     if not await ensure_db_or_warn(ctx): return
     if not payload or not payload.strip():
         await ctx.send("❌ 형식 오류. 예: `!추가 nick|이름|팀|포지션|구종1,구종2|폼` 또는 멀티라인 형식.")
         return
 
-    # prepare created_by with avatar if possible
     author = ctx.author
     avatar_url = None
     try:
@@ -500,7 +501,7 @@ async def add_one_cmd(ctx, *, payload: str):
             avatar_url = author.avatar.url
         except Exception:
             avatar_url = None
-    created_by = {
+    created_by_template = {
         "id": getattr(author, "id", None),
         "name": getattr(author, "name", ""),
         "discriminator": getattr(author, "discriminator", None),
@@ -508,149 +509,175 @@ async def add_one_cmd(ctx, *, payload: str):
         "avatar_url": avatar_url
     }
 
-    lines = [l for l in payload.splitlines() if l.strip()]
-    # 파이프 형식 우선 처리
-    if len(lines) == 1 and '|' in lines[0]:
-        parts = lines[0].split("|")
-        if len(parts) < 4:
-            await ctx.send("❌ 파이프 형식 오류. 예: `!추가 nick|이름|팀|포지션|구종1,구종2|폼`")
-            return
-        raw_nick = parts[0].strip()
-        target_norm = resolve_nick(raw_nick)
-        nick_docid = target_norm
-        name = parts[1].strip() or raw_nick
-        team_val = parts[2].strip()
-        team = normalize_team_name(team_val) if team_val else None
-        position = parts[3].strip()
-        pitch_types = []
-        form = ""
-        if len(parts) >= 5 and parts[4].strip():
-            pitch_types = [normalize_pitch_token(p.strip()) for p in parts[4].split(",") if p.strip()]
-        if len(parts) >= 6:
-            form = parts[5].strip()
+    # split payload into blocks (빈줄로 구분) — 단일 블록이면 기존 동작과 동일
+    blocks = split_into_blocks(payload)
+    # 단일 블록이지만 파이프가 아닌 경우에도 블록으로 취급되어 처리됨
+    added_new = []
+    appended_existing = []
+    failed = []
 
-        doc_ref = db.collection("players").document(nick_docid)
-        exists = doc_ref.get().exists
-
-        # MC 검증: 신규 생성의 경우만 검증
-        if VERIFY_MC and not exists:
-            valid = await is_mc_username(raw_nick)
-            if not valid:
-                await ctx.send(f"❌ `{raw_nick}` 는(은) 유효한 마인크래프트 계정명이 아닙니다. 등록이 취소되었습니다.")
-                return
-
-        author = ctx.author
-        created_by = {
-            "id": getattr(author, "id", None),
-            "name": getattr(author, "name", ""),
-            "discriminator": getattr(author, "discriminator", None),
-            "display_name": getattr(author, "display_name", getattr(author, "name", ""))
-        }
-
-        # 기존이면 파이프 형식은 전체 덮어쓰기 (사용자가 전체 정보를 준다고 가정)
-        data = {
-            "nickname": raw_nick if nick_docid == normalize_nick(raw_nick) else nick_docid,
-            "name": name,
-            "team": team or "Free",
-            "position": position,
-            "pitch_types": pitch_types,
-            "form": form,
-            "extra": {},
-            "created_at": now_iso(),
-            "updated_at": now_iso(),
-            "created_by": created_by
-        }
+    for i, block_lines in enumerate(blocks, start=1):
         try:
-            doc_ref.set(data)
-            if data["team"]:
-                t_ref = team_doc_ref(data["team"])
-                t_ref.set({"name": data["team"], "created_at": now_iso()}, merge=True)
-                t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(nick_docid)])})
-            embed = make_player_embed(data, context={"note": "파이프 형식 전체 등록/덮어쓰기"})
-            await ctx.send(content="✅ 선수 추가 완료", embed=embed)
-        except Exception as e:
-            await ctx.send(f"❌ 추가 실패: {e}")
-        return
+            # if this block is single-line and contains '|', parse as pipe
+            if len(block_lines) == 1 and '|' in block_lines[0]:
+                parts = block_lines[0].split("|")
+                if len(parts) < 4:
+                    failed.append(f"블록 {i}: 파이프 형식 오류")
+                    continue
+                raw_nick = parts[0].strip()
+                target_norm = resolve_nick(raw_nick)
+                nick_docid = target_norm
+                name = parts[1].strip() or raw_nick
+                team_val = parts[2].strip()
+                team = normalize_team_name(team_val) if team_val else None
+                position = parts[3].strip()
+                pitch_types = []
+                form = ""
+                if len(parts) >= 5 and parts[4].strip():
+                    pitch_types = [normalize_pitch_token(p.strip()) for p in parts[4].split(",") if p.strip()]
+                if len(parts) >= 6:
+                    form = parts[5].strip()
 
-    # 멀티라인(또는 단일 라인지만 공백형식) 처리: parse_block_to_player로 파싱
-    block_lines = lines
-    parsed = parse_block_to_player(block_lines)
-    raw_nick = parsed["nickname"]
-    target_norm = resolve_nick(raw_nick)
-    doc_ref = db.collection("players").document(target_norm)
-    exists = doc_ref.get().exists
+                doc_ref = db.collection("players").document(nick_docid)
+                exists = doc_ref.get().exists
 
-    # If exists, append pitch types; if not, create new with provided info (team may be None -> default Free)
-    if exists:
-        try:
-            existing = doc_ref.get().to_dict() or {}
-            existing_pitches = existing.get("pitch_types", [])
-            new_pitches = parsed.get("pitch_types", [])
-            # append unique by base name (ignore number when comparing)
-            appended = existing_pitches[:]
-            existing_bases = [pitch_base_name(p) for p in appended]
-            for p in new_pitches:
-                base = pitch_base_name(p)
-                if base not in existing_bases:
-                    appended.append(p)
-                    existing_bases.append(base)
-            doc_ref.update({"pitch_types": appended, "updated_at": now_iso()})
-            # if parsed includes form or team and they are provided, update them optionally
-            updates = {}
-            if parsed.get("form"):
-                updates["form"] = parsed.get("form")
-            if parsed.get("team") is not None:
-                updates["team"] = parsed.get("team") or "Free"
-            if updates:
-                updates["updated_at"] = now_iso()
+                # MC 검증: 신규 생성의 경우만 검증
+                if VERIFY_MC and not exists:
+                    valid = await is_mc_username(raw_nick)
+                    if not valid:
+                        failed.append(f"블록 {i}: `{raw_nick}` 은(는) 마인크래프트 계정 아님")
+                        continue
+
+                # if exists -> append pitches unique; else create
+                if exists:
+                    existing = doc_ref.get().to_dict() or {}
+                    existing_pitches = existing.get("pitch_types", [])
+                    appended = existing_pitches[:]
+                    existing_bases = [pitch_base_name(p) for p in appended]
+                    for p in pitch_types:
+                        base = pitch_base_name(p)
+                        if base not in existing_bases:
+                            appended.append(p)
+                            existing_bases.append(base)
+                    updates = {"pitch_types": appended, "updated_at": now_iso()}
+                    # if team provided in pipe, update it (overwrite)
+                    if team is not None:
+                        updates["team"] = team or "Free"
+                    if form:
+                        updates["form"] = form
+                    doc_ref.update(updates)
+                    # ensure roster contains player
+                    team_now = (team or existing.get("team") or "Free")
+                    t_ref = team_doc_ref(team_now)
+                    t_ref.set({"name": team_now, "created_at": now_iso()}, merge=True)
+                    t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(target_norm)])})
+                    appended_existing.append(target_norm)
+                else:
+                    # create new
+                    created_by = created_by_template.copy()
+                    data = {
+                        "nickname": raw_nick,
+                        "name": name,
+                        "team": team or "Free",
+                        "position": position,
+                        "pitch_types": pitch_types,
+                        "form": form,
+                        "extra": {},
+                        "created_at": now_iso(),
+                        "updated_at": now_iso(),
+                        "created_by": created_by
+                    }
+                    doc_ref.set(data)
+                    if data["team"]:
+                        t_ref = team_doc_ref(data["team"])
+                        t_ref.set({"name": data["team"], "created_at": now_iso()}, merge=True)
+                        t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(target_norm)])})
+                    added_new.append(target_norm)
+                continue  # next block
+
+            # otherwise parse as normal block (multi-line)
+            parsed = parse_block_to_player(block_lines)
+            raw_nick = parsed["nickname"]
+            target_norm = resolve_nick(raw_nick)
+            doc_ref = db.collection("players").document(target_norm)
+            exists = doc_ref.get().exists
+
+            if exists:
+                # append new pitches uniquely
+                existing = doc_ref.get().to_dict() or {}
+                existing_pitches = existing.get("pitch_types", [])
+                new_pitches = parsed.get("pitch_types", [])
+                appended = existing_pitches[:]
+                existing_bases = [pitch_base_name(p) for p in appended]
+                for p in new_pitches:
+                    base = pitch_base_name(p)
+                    if base not in existing_bases:
+                        appended.append(p)
+                        existing_bases.append(base)
+                updates = {"pitch_types": appended, "updated_at": now_iso()}
+                # parsed includes team explicitly? (None => keep old)
+                if parsed.get("team") is not None:
+                    updates["team"] = parsed.get("team") or "Free"
+                if parsed.get("form"):
+                    updates["form"] = parsed.get("form")
+                if parsed.get("position"):
+                    updates["position"] = parsed.get("position")
+                if parsed.get("name"):
+                    updates["name"] = parsed.get("name")
                 doc_ref.update(updates)
-            # ensure roster contains player
-            team_now = (parsed.get("team") or existing.get("team") or "Free")
-            t_ref = team_doc_ref(team_now)
-            t_ref.set({"name": team_now, "created_at": now_iso()}, merge=True)
-            t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(target_norm)])})
-            embed = make_player_embed(doc_ref.get().to_dict(), context={"note": "구종이 기존에 추가되었습니다."})
-            await ctx.send(content=f"✅ `{target_norm}` 에 구종 추가 완료", embed=embed)
-        except Exception as e:
-            await ctx.send(f"❌ 구종 추가 실패: {e}")
-        return
-    else:
-        # 신규 생성
-        if VERIFY_MC:
-            valid = await is_mc_username(raw_nick)
-            if not valid:
-                await ctx.send(f"❌ `{raw_nick}` 는(은) 유효한 마인크래프트 계정명이 아닙니다. 등록이 취소되었습니다.")
-                return
-        author = ctx.author
-        created_by = {
-            "id": getattr(author, "id", None),
-            "name": getattr(author, "name", ""),
-            "discriminator": getattr(author, "discriminator", None),
-            "display_name": getattr(author, "display_name", getattr(author, "name", ""))
-        }
-        data = {
-            "nickname": raw_nick,
-            "name": parsed.get("name", raw_nick),
-            "team": parsed.get("team") or "Free",
-            "position": parsed.get("position", "N/A"),
-            "pitch_types": parsed.get("pitch_types", []),
-            "form": parsed.get("form", ""),
-            "extra": {},
-            "created_at": now_iso(),
-            "updated_at": now_iso(),
-            "created_by": created_by
-        }
-        try:
-            doc_ref.set(data)
-            if data["team"]:
-                t_ref = team_doc_ref(data["team"])
-                t_ref.set({"name": data["team"], "created_at": now_iso()}, merge=True)
+                team_now = (parsed.get("team") or existing.get("team") or "Free")
+                t_ref = team_doc_ref(team_now)
+                t_ref.set({"name": team_now, "created_at": now_iso()}, merge=True)
                 t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(target_norm)])})
-            embed = make_player_embed(data, context={"note": "신규 등록"})
-            await ctx.send(content="✅ 신규 선수 등록 완료", embed=embed)
+                appended_existing.append(target_norm)
+            else:
+                # 신규 생성: MC검증
+                if VERIFY_MC:
+                    valid = await is_mc_username(raw_nick)
+                    await asyncio.sleep(0.05)
+                    if not valid:
+                        failed.append(f"블록 {i}: `{raw_nick}` 은(는) 마인크래프트 계정 아님")
+                        continue
+                created_by = created_by_template.copy()
+                data = {
+                    "nickname": raw_nick,
+                    "name": parsed.get("name", raw_nick),
+                    "team": parsed.get("team") or "Free",
+                    "position": parsed.get("position", "N/A"),
+                    "pitch_types": parsed.get("pitch_types", []),
+                    "form": parsed.get("form", ""),
+                    "extra": {},
+                    "created_at": now_iso(),
+                    "updated_at": now_iso(),
+                    "created_by": created_by
+                }
+                doc_ref.set(data)
+                if data["team"]:
+                    t_ref = team_doc_ref(data["team"])
+                    t_ref.set({"name": data["team"], "created_at": now_iso()}, merge=True)
+                    t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(target_norm)])})
+                added_new.append(target_norm)
         except Exception as e:
-            await ctx.send(f"❌ 등록 실패: {e}")
-        return
+            failed.append(f"블록 {i}: {e}")
+
+    # 요약 임베드 전송
+    summary = discord.Embed(title="!추가 처리 요약", timestamp=datetime.now(timezone.utc))
+    summary.add_field(name="요청자", value=f"{created_by_template.get('display_name')} (ID: {created_by_template.get('id')})", inline=False)
+    summary.add_field(name="총 블록", value=str(len(blocks)), inline=True)
+    summary.add_field(name="신규 생성", value=str(len(added_new)), inline=True)
+    summary.add_field(name="기존에 구종 추가(append)", value=str(len(appended_existing)), inline=True)
+    summary.add_field(name="오류", value=str(len(failed)), inline=True)
+    if added_new:
+        summary.add_field(name="신규 목록 (최대 30)", value=", ".join(added_new[:30]), inline=False)
+    if appended_existing:
+        summary.add_field(name="구종 추가된 선수 (최대 30)", value=", ".join(appended_existing[:30]), inline=False)
+    if failed:
+        summary.add_field(name="오류 예시 (최대 10)", value="\n".join(failed[:10]), inline=False)
+        summary.colour = discord.Color.red()
+    else:
+        summary.colour = discord.Color.green()
+
+    await ctx.send(embed=summary)
 
 # ---------- 블록(개행) 기반 대량 등록 (동작 유지) ----------
 @bot.command(name="등록")
@@ -1453,5 +1480,3 @@ if __name__ == "__main__":
                 loop.run_until_complete(close_http_session())
         except Exception:
             pass
-
-  
