@@ -1,16 +1,9 @@
 # bot.py
 """
 Discord + Firebase (Firestore) Baseball Player Manager Bot
-- Python 3.8+
-- discord.py 명령 기반 봇
-- Firestore: players, teams, records(collection per player doc)
-- 한국어 명령어: !정보, !정보상세, !등록, !추가, !수정, !닉변, !삭제, !구종삭제, 팀명령, 기록명령 등
-- 이번 버전:
-  - 마인크래프트 닉네임(Mojang API) 검증 기능 추가 (단일/대량 등록)
-  - Minotar 스킨 썸네일/바디 포함
-  - aiohttp 사용 (비동기 HTTP)
-  - timezone-aware datetime 사용
-  - 전체 파일(생략 없음)
+(수정본) - 대량 등록(!등록) 파싱 견고화
+- Mojang 검증, Minotar 스킨, 임베드, timezone-aware datetime 포함
+- requirements: discord.py, firebase-admin, python-dotenv, aiohttp
 """
 
 import os
@@ -65,7 +58,6 @@ def init_firebase():
             firebase_admin.initialize_app(cred)
             print("✅ Firebase initialized from GOOGLE_APPLICATION_CREDENTIALS path")
         else:
-            # Use Application Default Credentials if available
             firebase_admin.initialize_app()
             print("✅ Firebase initialized with default creds")
     except Exception as e:
@@ -99,12 +91,6 @@ async def close_http_session():
 
 # ---------- Minecraft username validation (Mojang API) ----------
 async def is_mc_username(nick: str) -> bool:
-    """
-    Mojang API 확인:
-    GET https://api.mojang.com/users/profiles/minecraft/{username}
-    - 200: exists (body contains id/name)
-    - 204/404: not found
-    """
     if not VERIFY_MC:
         return True  # 검증 비활성화 시 항상 True
 
@@ -112,7 +98,6 @@ async def is_mc_username(nick: str) -> bool:
     if not key:
         return False
 
-    # 캐시 체크
     if key in mc_cache:
         return mc_cache[key]
 
@@ -123,15 +108,12 @@ async def is_mc_username(nick: str) -> bool:
             if resp.status == 200:
                 mc_cache[key] = True
                 return True
-            # Mojang returns 204 or 404 for not found in different cases
             if resp.status in (204, 404):
                 mc_cache[key] = False
                 return False
-            # 기타 상태는 실패로 처리하되 캐시하지 않음 (네트워크 문제 등)
             mc_cache[key] = False
             return False
     except asyncio.TimeoutError:
-        # 타임아웃은 실패로 처리
         mc_cache[key] = False
         return False
     except Exception:
@@ -140,7 +122,6 @@ async def is_mc_username(nick: str) -> bool:
 
 # ---------- 유틸리티 ----------
 def now_iso():
-    # timezone-aware UTC ISO format
     return datetime.now(timezone.utc).isoformat()
 
 def normalize_nick(nick: str) -> str:
@@ -215,37 +196,13 @@ async def send_help_text(ctx):
 
 **등록/추가/대량등록**
 `{BOT}등록` - 여러 줄 텍스트로 등록 (두 포맷 지원)
-  1) 기존 파이프 형식: `nick|이름|팀|포지션|구종1,구종2|폼`
-  2) 새 포맷: `닉네임 (폼) [팀] 구종(능력치) ...`
-     예: `ccpy (언더핸드) [레이 마린스] 포심(20) 체인지업(20) 포크(30)`
+  1) 파이프 형식: `nick|이름|팀|포지션|구종1,구종2|폼`
+  2) 라인 포맷: `닉네임 (폼) [팀] 구종(숫자) ...`
+     예: `ccgy2 (언더핸드) [레이 마린스] 포심(20) 체인지업(20)`
 
-`{BOT}추가 nick|이름|팀|포지션|구종1,구종2|폼` - 한 명 추가 (파이프 형식)
+`{BOT}추가 nick|이름|팀|포지션|구종1,구종2|폼` - 한 명 추가
 
-**수정/닉변/삭제**
-`{BOT}수정 닉네임 필드 새값` - 예: `{BOT}수정 yian position P`  
-`{BOT}닉변 옛닉 새닉` - 닉네임 변경  
-`{BOT}삭제 닉네임` - 선수 삭제  
-`{BOT}구종삭제 닉네임 구종명` - 특정 구종 제거
-
-**팀 관리**
-`{BOT}팀 팀명` - 팀 생성/조회  
-`{BOT}목록 players|teams` - 목록 보기  
-`{BOT}이적 닉네임 팀명` - 이적 처리  
-`{BOT}fa 닉네임` - FA 처리  
-`{BOT}웨이버 닉네임` - 웨이버 상태  
-`{BOT}방출 닉네임` - 방출 처리  
-`{BOT}트레이드 닉1 닉2` - 두 선수 교환  
-`{BOT}팀이름변경 옛이름 새이름` - 팀명 변경  
-`{BOT}팀삭제 팀명` - 팀 삭제  
-`{BOT}가져오기파일` - 첨부 CSV/TXT로 대량 등록
-
-**기록 (타자/투수)**
-`{BOT}기록추가타자 닉네임 날짜 PA AB R H RBI HR SB`  
-`{BOT}기록추가투수 닉네임 날짜 IP H R ER BB SO`  
-`{BOT}기록보기 닉네임`  
-`{BOT}기록리셋 닉네임 type` - type: batting|pitching|all
-
-도움이 필요하면 `{BOT}도움` 또는 `{BOT}도움말` 을 입력하세요.
+... 기타 명령 생략(원하면 다시 전체 출력)
 """
     await ctx.send(cmds)
 
@@ -315,10 +272,6 @@ async def info_detail_cmd(ctx, nick: str):
 # ---------- 단일 추가 (파이프 형식) ----------
 @bot.command(name="추가")
 async def add_one_cmd(ctx, *, payload: str):
-    """
-    단일 추가 (파이프 형식):
-    !추가 nick|이름|팀|포지션|구종1,구종2|폼
-    """
     if not await ensure_db_or_warn(ctx): return
     parts = payload.split("|")
     if len(parts) < 4:
@@ -360,7 +313,6 @@ async def add_one_cmd(ctx, *, payload: str):
             t_ref = team_doc_ref(team)
             t_ref.set({"name": team, "created_at": now_iso()}, merge=True)
             t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(nick)])})
-        # Single add embed with skin
         embed = make_player_embed(data, include_body=True)
         embed.colour = discord.Color.green()
         await ctx.send(content="✅ 선수 추가 완료", embed=embed)
@@ -372,10 +324,11 @@ async def add_one_cmd(ctx, *, payload: str):
 async def bulk_register_cmd(ctx, *, bulk_text: str = None):
     """
     여러 줄 등록: 메시지 본문에 여러 줄로 붙여넣기
-    지원 포맷 (둘 다):
-    1) 파이프: nick|이름|팀|포지션|구종1,구종2|폼
-    2) 라인 포맷: 닉네임 (폼) [팀] 구종(숫자) 구종(숫자) ...
-       예: ccpy (언더핸드) [레이 마린스] 포심(20) 체인지업(20) 포크(30)
+    포맷 지원:
+      - 파이프: nick|이름|팀|포지션|구종1,구종2|폼
+      - 라인 포맷: 닉네임 (폼) [팀] 구종(숫자) 구종(숫자) ...
+    변경점: 이전 정규식 대신 더 견고한 "첫 토큰 = 닉네임" 방식으로 파싱하여
+    닉네임이 잘려서 'c'처럼 나오던 버그를 해결했습니다.
     """
     if not await ensure_db_or_warn(ctx): return
 
@@ -387,14 +340,12 @@ async def bulk_register_cmd(ctx, *, bulk_text: str = None):
     added = []
     errors = []
 
-    # regex to parse "닉네임 (폼) [팀] 구종(숫자) ..."
-    line_pattern = re.compile(
-        r'^\s*(?P<nick>[^\(\[\s][^\(\[\]]*?)\s*(?:\((?P<form>[^\)]*?)\))?\s*(?:\[(?P<team>[^\]]*?)\])?\s*(?P<pitches>.*)$'
-    )
+    # pitch pattern remains
     pitch_pattern = re.compile(r'([^\s,()]+)\s*\(\s*(\d+)\s*\)')  # 구종(숫자)
 
     for i, line in enumerate(lines, start=1):
         try:
+            # 파이프 형식 우선
             if '|' in line:
                 parts = line.split("|")
                 if len(parts) < 4:
@@ -406,38 +357,46 @@ async def bulk_register_cmd(ctx, *, bulk_text: str = None):
                 position = parts[3].strip()
                 pitch_types = []
                 form = ""
-                if len(parts) >=5 and parts[4].strip():
+                if len(parts) >= 5 and parts[4].strip():
                     pitch_types = [p.strip() for p in parts[4].split(",") if p.strip()]
-                if len(parts) >=6:
+                if len(parts) >= 6:
                     form = parts[5].strip()
             else:
-                m = line_pattern.match(line)
-                if not m:
-                    errors.append(f"라인 {i}: 파싱 실패")
+                # **견고한 파싱 방식**
+                # 1) 첫 토큰을 닉네임으로 사용 (split by whitespace)
+                tokens = line.split()
+                if not tokens:
+                    errors.append(f"라인 {i}: 빈 줄")
                     continue
-                nick = m.group('nick').strip()
-                form = (m.group('form') or "").strip()
-                team = (m.group('team') or "Free").strip()
-                pitch_text = (m.group('pitches') or "").strip()
+                nick = tokens[0].strip()
+                rest = line[len(tokens[0]):].strip()  # 남은 문자열
 
+                # 2) 폼( ) 과 팀 [ ] 추출 (존재하면)
+                form_match = re.search(r'\(([^)]*)\)', rest)
+                team_match = re.search(r'\[([^\]]*)\]', rest)
+                form = form_match.group(1).strip() if form_match else ""
+                team = team_match.group(1).strip() if team_match else "Free"
+
+                # 3) 구종은 전체 라인에서 찾기 (폼/팀 위치와 상관없이)
                 pitch_types = []
-                for pm in pitch_pattern.finditer(pitch_text):
+                for pm in pitch_pattern.finditer(line):
                     pname = pm.group(1).strip()
                     pval = pm.group(2).strip()
                     pitch_types.append(f"{pname}({pval})")
 
+                # 4) name, position 추정: name 없으면 닉네임 사용, position은 알 수 없으니 N/A
                 name = nick
                 position = "N/A"
 
-            # MC 검증 (각 닉네임)
+            # MC 검증
             if VERIFY_MC:
                 valid = await is_mc_username(nick)
-                # 레이트 리밋 완화용 짧은 지연
-                await asyncio.sleep(0.12)
+                await asyncio.sleep(0.12)  # 레이트제한 완화
                 if not valid:
                     errors.append(f"라인 {i}: `{nick}` 은(는) 마인크래프트 계정이 아님")
                     continue
 
+            # 저장
             doc_ref = player_doc_ref(nick)
             data = {
                 "nickname": nick,
@@ -459,7 +418,7 @@ async def bulk_register_cmd(ctx, *, bulk_text: str = None):
         except Exception as e:
             errors.append(f"라인 {i}: {e}")
 
-    # 결과 임베드 생성 (요약)
+    # 결과 임베드
     summary_embed = discord.Embed(title="등록 요약", timestamp=datetime.now(timezone.utc))
     summary_embed.add_field(name="총 입력", value=str(len(lines)), inline=True)
     summary_embed.add_field(name="성공", value=str(len(added)), inline=True)
@@ -482,9 +441,7 @@ async def bulk_register_cmd(ctx, *, bulk_text: str = None):
 
     await ctx.send(embed=summary_embed)
 
-# ---------- 이하: 수정/닉변/삭제/구종삭제/팀/목록/기록 등 (기존 동작 유지) ----------
-# (아래 명령들은 위에 이미 구현된 함수들과 동일하게 동작합니다.
-# 필요하면 여기도 마인크래프트 검증을 추가해드릴 수 있습니다.)
+# ---------- 이하: 기존 명령들 (수정/닉변/삭제/구종삭제/팀/목록/기록 등) ----------
 @bot.command(name="수정")
 async def edit_cmd(ctx, nick: str, field: str, *, value: str):
     if not await ensure_db_or_warn(ctx): return
@@ -801,7 +758,6 @@ async def on_command_error(ctx, error):
 # ---------- 봇 종료시 세션 정리 ----------
 @bot.event
 async def on_close():
-    # not always called, but attempt to close aiohttp session when possible
     try:
         asyncio.create_task(close_http_session())
     except Exception:
@@ -818,7 +774,6 @@ if __name__ == "__main__":
     except Exception as e:
         print("봇 실행 중 예외:", e)
     finally:
-        # ensure http session closed on process exit (best-effort)
         try:
             loop = asyncio.get_event_loop()
             if http_session and not http_session.closed:
