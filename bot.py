@@ -5,14 +5,16 @@ Discord + Firebase (Firestore) Baseball Player Manager Bot
 - discord.py 명령 기반 봇
 - Firestore: players, teams, records(collection per player doc)
 - 한국어 명령어: !정보, !정보상세, !등록, !추가, !수정, !닉변, !삭제, !구종삭제, 팀명령, 기록명령 등
-- 이번 버전: "닉네임 (폼) [팀] 구종(능력치) ..." 형식 파싱 지원
+- 이번 버전:
+  - datetime 경고 수정 (timezone-aware 사용)
+  - 등록 시 임베드 출력 (단일 추가는 선수 카드 임베드, 대량 등록은 요약 임베드)
 """
 
 import os
 import json
 import asyncio
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 import discord
@@ -73,14 +75,16 @@ except Exception as e:
 
 # ---------- 유틸리티 ----------
 def now_iso():
-    return datetime.utcnow().isoformat() + "Z"
+    # timezone-aware UTC ISO format (경고 해소)
+    return datetime.now(timezone.utc).isoformat()
 
 def normalize_nick(nick: str) -> str:
     return nick.strip().lower()
 
 def short_time(ts_iso: str) -> str:
     try:
-        return ts_iso.replace("T", " ").split(".")[0].replace("Z", "")
+        # show human-friendly time without timezone if possible
+        return ts_iso.replace("T", " ").split(".")[0]
     except Exception:
         return ts_iso
 
@@ -89,6 +93,25 @@ async def ensure_db_or_warn(ctx):
         await ctx.send("❌ 데이터베이스가 초기화되어 있지 않습니다. 관리자에게 문의하세요.")
         return False
     return True
+
+def make_player_embed(data: dict) -> discord.Embed:
+    """
+    선수 정보를 보기 좋은 임베드로 반환.
+    data: dict with keys nickname, name, team, position, pitch_types(list), form, created_at, updated_at
+    """
+    title = f"{data.get('nickname','-')} ({data.get('form','-')})"
+    team = data.get('team','Free')
+    embed = discord.Embed(title=title, description=f"[{team}]", timestamp=datetime.now(timezone.utc))
+    embed.add_field(name="이름", value=data.get('name','-'), inline=True)
+    embed.add_field(name="포지션", value=data.get('position','-'), inline=True)
+    pitch_types = data.get('pitch_types', [])
+    if pitch_types:
+        # join but limit length
+        embed.add_field(name="구종", value=", ".join(pitch_types[:10]), inline=False)
+    else:
+        embed.add_field(name="구종", value="-", inline=False)
+    embed.set_footer(text=f"등록: {short_time(data.get('created_at','-'))}  수정: {short_time(data.get('updated_at','-'))}")
+    return embed
 
 # ---------- 기본 헬프 (한글) ----------
 async def send_help_text(ctx):
@@ -104,10 +127,9 @@ async def send_help_text(ctx):
 `{BOT}등록` - 여러 줄 텍스트로 등록 (두 포맷 지원)
   1) 기존 파이프 형식: `nick|이름|팀|포지션|구종1,구종2|폼`
   2) 새 포맷(이미지 예시): `닉네임 (폼) [팀] 구종(능력치) 구종(능력치) ...`
-     예: `ccpy (언더핸드) [레이 마린스] 포심(20) 체인지업(20) 포크(30) 너클볼(30) 너클커브(40)`
+     예: `ccpy (언더핸드) [레이 마린스] 포심(20) 체인지업(20) 포크(30)`
 
 `{BOT}추가 nick|이름|팀|포지션|구종1,구종2|폼` - 한 명 추가 (파이프 형식)
-`{BOT}추가포맷` - (옵션) 필요 시 별도 포맷 명령 확장 가능
 
 **수정/닉변/삭제**
 `{BOT}수정 닉네임 필드 새값` - 예: `{BOT}수정 yian position P`  
@@ -150,7 +172,7 @@ async def help_kor(ctx):
 async def help_kor2(ctx):
     await send_help_text(ctx)
 
-# ---------- 선수 관리 헬퍼 ----------
+# ---------- Firestore 참조 헬퍼 ----------
 def player_doc_ref(nick: str):
     return db.collection("players").document(normalize_nick(nick))
 
@@ -169,14 +191,8 @@ async def info_cmd(ctx, nick: str):
         await ctx.send(f"❌ `{nick}` 선수가 존재하지 않습니다.")
         return
     d = doc.to_dict()
-    msg = (
-        f"**{d.get('nickname','-')}** — 기본 정보\n"
-        f"이름: {d.get('name','-')}\n"
-        f"팀: {d.get('team','-')}\n"
-        f"포지션: {d.get('position','-')}\n"
-        f"등록일: {short_time(d.get('created_at','-'))}\n"
-    )
-    await ctx.send(msg)
+    embed = make_player_embed(d)
+    await ctx.send(embed=embed)
 
 @bot.command(name="정보상세")
 async def info_detail_cmd(ctx, nick: str):
@@ -186,20 +202,18 @@ async def info_detail_cmd(ctx, nick: str):
         await ctx.send(f"❌ `{nick}` 선수가 존재하지 않습니다.")
         return
     d = doc.to_dict()
-    pitch_types = ", ".join([f"{p}" for p in d.get("pitch_types", [])]) if d.get("pitch_types") else "-"
+    pitch_types = d.get("pitch_types", [])
     form = d.get("form","-")
     extra = d.get("extra","-")
-    msg = (
-        f"**{d.get('nickname','-')}** — 상세 정보\n"
-        f"이름: {d.get('name','-')}\n"
-        f"팀: {d.get('team','-')}\n"
-        f"포지션: {d.get('position','-')}\n"
-        f"구종: {pitch_types}\n"
-        f"폼: {form}\n"
-        f"추가정보: {extra}\n"
-        f"등록: {short_time(d.get('created_at','-'))}  수정: {short_time(d.get('updated_at','-'))}\n"
-    )
-    await ctx.send(msg)
+    embed = discord.Embed(title=f"{d.get('nickname','-')} — 상세 정보", timestamp=datetime.now(timezone.utc))
+    embed.add_field(name="이름", value=d.get('name','-'), inline=True)
+    embed.add_field(name="팀", value=d.get('team','-'), inline=True)
+    embed.add_field(name="포지션", value=d.get('position','-'), inline=True)
+    embed.add_field(name="구종", value=", ".join(pitch_types) if pitch_types else "-", inline=False)
+    embed.add_field(name="폼", value=form, inline=True)
+    embed.add_field(name="추가정보", value=str(extra), inline=False)
+    embed.set_footer(text=f"등록: {short_time(d.get('created_at','-'))}  수정: {short_time(d.get('updated_at','-'))}")
+    await ctx.send(embed=embed)
 
 # ---------- 단일 추가 (파이프 형식) ----------
 @bot.command(name="추가")
@@ -242,7 +256,10 @@ async def add_one_cmd(ctx, *, payload: str):
             t_ref = team_doc_ref(team)
             t_ref.set({"name": team, "created_at": now_iso()}, merge=True)
             t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(nick)])})
-        await ctx.send(f"✅ 선수 `{nick}` 추가됨.")
+        # Single add embed
+        embed = make_player_embed(data)
+        embed.colour = discord.Color.green()
+        await ctx.send(content="✅ 선수 추가 완료", embed=embed)
     except Exception as e:
         await ctx.send(f"❌ 추가 실패: {e}")
 
@@ -263,10 +280,10 @@ async def bulk_register_cmd(ctx, *, bulk_text: str = None):
         return
 
     lines = [l.strip() for l in bulk_text.splitlines() if l.strip()]
-    added = 0
+    added = []
     errors = []
 
-    # regex to parse "닉네임 (폼) [팀] 구종(숫자) 구종(숫자) , 구종(숫자)"
+    # regex to parse "닉네임 (폼) [팀] 구종(숫자) 구종(숫자)"
     line_pattern = re.compile(
         r'^\s*(?P<nick>[^\(\[\s][^\(\[\]]*?)\s*(?:\((?P<form>[^\)]*?)\))?\s*(?:\[(?P<team>[^\]]*?)\])?\s*(?P<pitches>.*)$'
     )
@@ -305,12 +322,10 @@ async def bulk_register_cmd(ctx, *, bulk_text: str = None):
                 for pm in pitch_pattern.finditer(pitch_text):
                     pname = pm.group(1).strip()
                     pval = pm.group(2).strip()
-                    # store as "구종(숫자)" string or as dict? keep string for display
                     pitch_types.append(f"{pname}({pval})")
 
                 # if no explicit name field available, set name = nick
                 name = nick
-
                 # position unknown here; set placeholder
                 position = "N/A"
 
@@ -331,14 +346,34 @@ async def bulk_register_cmd(ctx, *, bulk_text: str = None):
                 t_ref = team_doc_ref(team)
                 t_ref.set({"name": team, "created_at": now_iso()}, merge=True)
                 t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(nick)])})
-            added += 1
+            added.append(nick)
         except Exception as e:
             errors.append(f"라인 {i}: {e}")
 
-    res = f"✅ 등록 완료: {added}명 추가되었습니다."
+    # 결과 임베드 생성 (요약)
+    summary_embed = discord.Embed(title="등록 요약", timestamp=datetime.now(timezone.utc))
+    summary_embed.add_field(name="총 입력", value=str(len(lines)), inline=True)
+    summary_embed.add_field(name="성공", value=str(len(added)), inline=True)
+    summary_embed.add_field(name="오류", value=str(len(errors)), inline=True)
+
+    if added:
+        # show up to 20 successes
+        show_added = added[:20]
+        summary_embed.add_field(name="성공 목록 (최대 20)", value=", ".join(show_added), inline=False)
+        if len(added) > 20:
+            summary_embed.add_field(name="(생략)", value=f"...외 {len(added)-20}명", inline=False)
+
     if errors:
-        res += f"\n⚠️ 일부 오류:\n" + "\n".join(errors[:20])
-    await ctx.send(res)
+        # show up to 10 errors
+        show_errors = errors[:10]
+        summary_embed.add_field(name="오류 예시 (최대 10)", value="\n".join(show_errors), inline=False)
+        if len(errors) > 10:
+            summary_embed.add_field(name="(오류 생략)", value=f"...외 {len(errors)-10}건", inline=False)
+        summary_embed.colour = discord.Color.red()
+    else:
+        summary_embed.colour = discord.Color.green()
+
+    await ctx.send(embed=summary_embed)
 
 # ---------- 수정 ----------
 @bot.command(name="수정")
@@ -455,7 +490,7 @@ async def remove_pitch_cmd(ctx, nick: str, pitch: str):
     except Exception as e:
         await ctx.send(f"❌ 실패: {e}")
 
-# ---------- 팀 명령 ----------
+# ---------- 팀 / 목록 / 이적 등 (이전 코드 재사용) ----------
 @bot.command(name="팀")
 async def team_cmd(ctx, *, teamname: str):
     if not await ensure_db_or_warn(ctx): return
@@ -648,12 +683,9 @@ async def import_file_cmd(ctx):
     except Exception as e:
         await ctx.send(f"❌ 파일 처리 실패: {e}")
 
-# ---------- 기록: 타자 추가 ----------
+# ---------- 기록: 타자/투수 추가/보기/리셋 (이전 동작 유지) ----------
 @bot.command(name="기록추가타자")
 async def add_batting_cmd(ctx, nick: str, date: str, PA: int, AB: int, R: int, H: int, RBI: int, HR: int, SB: int):
-    """
-    예: !기록추가타자 nick 2025-11-16 4 3 1 2 1 0
-    """
     if not await ensure_db_or_warn(ctx): return
     ref = player_doc_ref(nick)
     if not ref.get().exists:
@@ -672,19 +704,14 @@ async def add_batting_cmd(ctx, nick: str, date: str, PA: int, AB: int, R: int, H
     }
     try:
         rec_ref = records_doc_ref(nick)
-        rec_ref.set({}, merge=True)  # ensure doc exists
+        rec_ref.set({}, merge=True)
         rec_ref.update({"batting": firestore.ArrayUnion([entry])})
         await ctx.send(f"✅ `{nick}` 에 타자 기록 추가됨: {date}")
     except Exception as e:
         await ctx.send(f"❌ 기록 추가 실패: {e}")
 
-# ---------- 기록: 투수 추가 ----------
 @bot.command(name="기록추가투수")
 async def add_pitching_cmd(ctx, nick: str, date: str, IP: float, H: int, R: int, ER: int, BB: int, SO: int):
-    """
-    예: !기록추가투수 nick 2025-11-16 5.2 6 3 3 2 7
-    IP 표기: 소수점으로 이닝 표기(예: 5.2는 5와 2/3)
-    """
     if not await ensure_db_or_warn(ctx): return
     ref = player_doc_ref(nick)
     if not ref.get().exists:
@@ -708,7 +735,6 @@ async def add_pitching_cmd(ctx, nick: str, date: str, IP: float, H: int, R: int,
     except Exception as e:
         await ctx.send(f"❌ 기록 추가 실패: {e}")
 
-# ---------- 기록 보기 ----------
 @bot.command(name="기록보기")
 async def view_records_cmd(ctx, nick: str):
     if not await ensure_db_or_warn(ctx): return
@@ -731,21 +757,15 @@ async def view_records_cmd(ctx, nick: str):
     if pitching:
         total_IP = sum(float(x.get("IP",0)) for x in pitching)
         total_ER = sum(int(x.get("ER",0)) for x in pitching)
-        # ERA 계산: (ER * 9) / IP
         era = (total_ER * 9 / total_IP) if total_IP>0 else 0
         lines.append(f"투수 기록 {len(pitching)}경기 — IP:{total_IP} ER:{total_ER} ERA:{era:.2f}")
     else:
         lines.append("투수 기록: 없음")
-    # send in chunks if necessary
     msg = "\n".join(lines)
     await ctx.send(msg)
 
-# ---------- 기록 리셋 ----------
 @bot.command(name="기록리셋")
 async def reset_records_cmd(ctx, nick: str, typ: str):
-    """
-    typ: batting | pitching | all
-    """
     if not await ensure_db_or_warn(ctx): return
     rec_ref = records_doc_ref(nick)
     if not rec_ref.get().exists:
@@ -769,13 +789,11 @@ async def reset_records_cmd(ctx, nick: str, typ: str):
 # ---------- 에러 처리 ----------
 @bot.event
 async def on_command_error(ctx, error):
-    # 기본적 친절한 메시지
     if isinstance(error, commands.MissingRequiredArgument):
         await ctx.send("인자가 부족합니다. `!도움` 로 사용법을 확인하세요.")
     elif isinstance(error, commands.CommandNotFound):
         await ctx.send("알 수 없는 명령어입니다. `!도움` 를 확인하세요.")
     else:
-        # fallback: 내부 오류 로그
         await ctx.send(f"명령 실행 중 오류가 발생했습니다: `{error}`")
         print("Unhandled command error:", error)
 
