@@ -1,9 +1,15 @@
 # bot.py
 """
 Discord + Firebase (Firestore) Baseball Player Manager Bot
-(수정본) - 대량 등록(!등록) 파싱 견고화
-- Mojang 검증, Minotar 스킨, 임베드, timezone-aware datetime 포함
-- requirements: discord.py, firebase-admin, python-dotenv, aiohttp
+- Python 3.8+
+- discord.py 명령 기반 봇
+- Firestore: players, teams, records(collection per player doc)
+- 한국어 명령어: !정보, !정보상세, !등록, !추가, !수정, !닉변, !삭제, !구종삭제, 팀명령, 기록명령 등
+- 기능 추가:
+  - 누가 등록했는지 Discord 닉네임 및 ID를 DB에 저장하고 임베드에 표시
+  - Mojang 검증, Minotar 스킨, 임베드, timezone-aware datetime 포함
+  - 대량 등록 파싱 견고화
+  - 전체 파일 (생략 없음)
 """
 
 import os
@@ -91,6 +97,12 @@ async def close_http_session():
 
 # ---------- Minecraft username validation (Mojang API) ----------
 async def is_mc_username(nick: str) -> bool:
+    """
+    Mojang API 확인:
+    GET https://api.mojang.com/users/profiles/minecraft/{username}
+    - 200: exists (body contains id/name)
+    - 204/404: not found
+    """
     if not VERIFY_MC:
         return True  # 검증 비활성화 시 항상 True
 
@@ -98,6 +110,7 @@ async def is_mc_username(nick: str) -> bool:
     if not key:
         return False
 
+    # 캐시 체크
     if key in mc_cache:
         return mc_cache[key]
 
@@ -122,6 +135,7 @@ async def is_mc_username(nick: str) -> bool:
 
 # ---------- 유틸리티 ----------
 def now_iso():
+    # timezone-aware UTC ISO format
     return datetime.now(timezone.utc).isoformat()
 
 def normalize_nick(nick: str) -> str:
@@ -159,28 +173,57 @@ def safe_avatar_urls(nick: str):
     except Exception:
         return None, None
 
-# ---------- 임베드 생성 ----------
+# ---------- 임베드 생성 (등록자 표시 포함) ----------
+def format_registrar_field(created_by: dict) -> str:
+    # created_by expected keys: id, name, discriminator (optional), display_name (optional)
+    if not created_by:
+        return "-"
+    uid = created_by.get("id", "-")
+    display = created_by.get("display_name") or created_by.get("name") or "-"
+    discr = created_by.get("discriminator")
+    if discr:
+        name_repr = f"{display} ({created_by.get('name','#').strip()}{('#'+discr) if discr else ''})"
+    else:
+        name_repr = f"{display}"
+    return f"{name_repr}\nID: {uid}"
+
 def make_player_embed(data: dict, include_body: bool = True) -> discord.Embed:
+    """
+    선수 정보를 보기 좋은 임베드로 반환.
+    data: dict with keys nickname, name, team, position, pitch_types(list), form, created_at, updated_at, created_by
+    include_body: 바디 렌더 이미지를 임베드에 포함할지 여부 (대량등록 요약 시 False 권장)
+    """
     nickname = data.get('nickname', '-')
     title = f"{nickname} ({data.get('form','-')})"
     team = data.get('team','Free') or "Free"
     embed = discord.Embed(title=title, description=f"[{team}]", timestamp=datetime.now(timezone.utc))
     embed.add_field(name="이름", value=data.get('name','-'), inline=True)
     embed.add_field(name="포지션", value=data.get('position','-'), inline=True)
+
     pitch_types = data.get('pitch_types', [])
     if pitch_types:
         embed.add_field(name="구종", value=", ".join(pitch_types[:10]), inline=False)
     else:
         embed.add_field(name="구종", value="-", inline=False)
+
+    # 등록자 정보
+    reg_info = format_registrar_field(data.get("created_by", {}))
+    embed.add_field(name="등록자", value=reg_info, inline=True)
+
     embed.set_footer(text=f"등록: {short_time(data.get('created_at','-'))}  수정: {short_time(data.get('updated_at','-'))}")
+
+    # Minecraft skin URLs
     try:
         avatar_url, body_url = safe_avatar_urls(nickname)
         if avatar_url:
-            embed.set_thumbnail(url=avatar_url)
+            embed.set_thumbnail(url=avatar_url)  # 오른쪽 작은 머리 아이콘
+        # 바디는 큰 이미지로 표시 (선택)
         if include_body and body_url:
             embed.set_image(url=body_url)
     except Exception:
+        # 실패해도 임베드는 문제없이 출력되게 함
         pass
+
     return embed
 
 # ---------- 기본 헬프 (한글) ----------
@@ -197,12 +240,36 @@ async def send_help_text(ctx):
 **등록/추가/대량등록**
 `{BOT}등록` - 여러 줄 텍스트로 등록 (두 포맷 지원)
   1) 파이프 형식: `nick|이름|팀|포지션|구종1,구종2|폼`
-  2) 라인 포맷: `닉네임 (폼) [팀] 구종(숫자) ...`
-     예: `ccgy2 (언더핸드) [레이 마린스] 포심(20) 체인지업(20)`
+  2) 라인 포맷: `닉네임 (폼) [팀] 구종(능력치) ...`
+     예: `ccgy2 (언더핸드) [레이 마린스] 포심(20) 체인지업(20) 포크(30)`
 
-`{BOT}추가 nick|이름|팀|포지션|구종1,구종2|폼` - 한 명 추가
+`{BOT}추가 nick|이름|팀|포지션|구종1,구종2|폼` - 한 명 추가 (파이프 형식)
 
-... 기타 명령 생략(원하면 다시 전체 출력)
+**수정/닉변/삭제**
+`{BOT}수정 닉네임 필드 새값` - 예: `{BOT}수정 yian position P`  
+`{BOT}닉변 옛닉 새닉` - 닉네임 변경  
+`{BOT}삭제 닉네임` - 선수 삭제  
+`{BOT}구종삭제 닉네임 구종명` - 특정 구종 제거
+
+**팀 관리**
+`{BOT}팀 팀명` - 팀 생성/조회  
+`{BOT}목록 players|teams` - 목록 보기  
+`{BOT}이적 닉네임 팀명` - 이적 처리  
+`{BOT}fa 닉네임` - FA 처리  
+`{BOT}웨이버 닉네임` - 웨이버 상태  
+`{BOT}방출 닉네임` - 방출 처리  
+`{BOT}트레이드 닉1 닉2` - 두 선수 교환  
+`{BOT}팀이름변경 옛이름 새이름` - 팀명 변경  
+`{BOT}팀삭제 팀명` - 팀 삭제  
+`{BOT}가져오기파일` - 첨부 CSV/TXT로 대량 등록
+
+**기록 (타자/투수)**
+`{BOT}기록추가타자 닉네임 날짜 PA AB R H RBI HR SB`  
+`{BOT}기록추가투수 닉네임 날짜 IP H R ER BB SO`  
+`{BOT}기록보기 닉네임`  
+`{BOT}기록리셋 닉네임 type` - type: batting|pitching|all
+
+도움이 필요하면 `{BOT}도움` 또는 `{BOT}도움말` 을 입력하세요.
 """
     await ctx.send(cmds)
 
@@ -259,6 +326,9 @@ async def info_detail_cmd(ctx, nick: str):
     embed.add_field(name="폼", value=form, inline=True)
     embed.add_field(name="추가정보", value=str(extra), inline=False)
     embed.set_footer(text=f"등록: {short_time(d.get('created_at','-'))}  수정: {short_time(d.get('updated_at','-'))}")
+    # 등록자 필드 추가
+    reg_info = format_registrar_field(d.get("created_by", {}))
+    embed.add_field(name="등록자", value=reg_info, inline=True)
     try:
         avatar_url, body_url = safe_avatar_urls(d.get('nickname',''))
         if avatar_url:
@@ -272,6 +342,11 @@ async def info_detail_cmd(ctx, nick: str):
 # ---------- 단일 추가 (파이프 형식) ----------
 @bot.command(name="추가")
 async def add_one_cmd(ctx, *, payload: str):
+    """
+    단일 추가 (파이프 형식):
+    !추가 nick|이름|팀|포지션|구종1,구종2|폼
+    저장 시 created_by 필드에 등록자 정보 추가
+    """
     if not await ensure_db_or_warn(ctx): return
     parts = payload.split("|")
     if len(parts) < 4:
@@ -295,6 +370,15 @@ async def add_one_cmd(ctx, *, payload: str):
             await ctx.send(f"❌ `{nick}` 는(은) 유효한 마인크래프트 계정명이 아닙니다. 등록이 취소되었습니다.")
             return
 
+    # 등록자 정보 수집
+    author = ctx.author
+    created_by = {
+        "id": getattr(author, "id", None),
+        "name": getattr(author, "name", ""),
+        "discriminator": getattr(author, "discriminator", None),
+        "display_name": getattr(author, "display_name", getattr(author, "name", ""))
+    }
+
     doc_ref = player_doc_ref(nick)
     data = {
         "nickname": nick,
@@ -305,14 +389,17 @@ async def add_one_cmd(ctx, *, payload: str):
         "form": form,
         "extra": {},
         "created_at": now_iso(),
-        "updated_at": now_iso()
+        "updated_at": now_iso(),
+        "created_by": created_by
     }
     try:
         doc_ref.set(data)
+        # 팀 로스터 업데이트
         if team:
             t_ref = team_doc_ref(team)
             t_ref.set({"name": team, "created_at": now_iso()}, merge=True)
             t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(nick)])})
+        # Single add embed with skin + 등록자 표시
         embed = make_player_embed(data, include_body=True)
         embed.colour = discord.Color.green()
         await ctx.send(content="✅ 선수 추가 완료", embed=embed)
@@ -329,12 +416,22 @@ async def bulk_register_cmd(ctx, *, bulk_text: str = None):
       - 라인 포맷: 닉네임 (폼) [팀] 구종(숫자) 구종(숫자) ...
     변경점: 이전 정규식 대신 더 견고한 "첫 토큰 = 닉네임" 방식으로 파싱하여
     닉네임이 잘려서 'c'처럼 나오던 버그를 해결했습니다.
+    등록자(created_by)는 요청한 Discord 사용자로 기록됩니다.
     """
     if not await ensure_db_or_warn(ctx): return
 
     if not bulk_text:
         await ctx.send("❌ 본문에 등록할 선수 정보를 여러 줄로 붙여넣어 주세요. (또는 첨부 파일 사용: `!가져오기파일`)")
         return
+
+    # 요청자 정보
+    author = ctx.author
+    created_by = {
+        "id": getattr(author, "id", None),
+        "name": getattr(author, "name", ""),
+        "discriminator": getattr(author, "discriminator", None),
+        "display_name": getattr(author, "display_name", getattr(author, "name", ""))
+    }
 
     lines = [l.strip() for l in bulk_text.splitlines() if l.strip()]
     added = []
@@ -345,7 +442,6 @@ async def bulk_register_cmd(ctx, *, bulk_text: str = None):
 
     for i, line in enumerate(lines, start=1):
         try:
-            # 파이프 형식 우선
             if '|' in line:
                 parts = line.split("|")
                 if len(parts) < 4:
@@ -363,7 +459,6 @@ async def bulk_register_cmd(ctx, *, bulk_text: str = None):
                     form = parts[5].strip()
             else:
                 # **견고한 파싱 방식**
-                # 1) 첫 토큰을 닉네임으로 사용 (split by whitespace)
                 tokens = line.split()
                 if not tokens:
                     errors.append(f"라인 {i}: 빈 줄")
@@ -377,14 +472,13 @@ async def bulk_register_cmd(ctx, *, bulk_text: str = None):
                 form = form_match.group(1).strip() if form_match else ""
                 team = team_match.group(1).strip() if team_match else "Free"
 
-                # 3) 구종은 전체 라인에서 찾기 (폼/팀 위치와 상관없이)
+                # 3) 구종은 전체 라인에서 찾기
                 pitch_types = []
                 for pm in pitch_pattern.finditer(line):
                     pname = pm.group(1).strip()
                     pval = pm.group(2).strip()
                     pitch_types.append(f"{pname}({pval})")
 
-                # 4) name, position 추정: name 없으면 닉네임 사용, position은 알 수 없으니 N/A
                 name = nick
                 position = "N/A"
 
@@ -396,7 +490,7 @@ async def bulk_register_cmd(ctx, *, bulk_text: str = None):
                     errors.append(f"라인 {i}: `{nick}` 은(는) 마인크래프트 계정이 아님")
                     continue
 
-            # 저장
+            # 저장 (created_by 포함)
             doc_ref = player_doc_ref(nick)
             data = {
                 "nickname": nick,
@@ -407,7 +501,8 @@ async def bulk_register_cmd(ctx, *, bulk_text: str = None):
                 "form": form,
                 "extra": {},
                 "created_at": now_iso(),
-                "updated_at": now_iso()
+                "updated_at": now_iso(),
+                "created_by": created_by
             }
             doc_ref.set(data)
             if team:
@@ -418,19 +513,22 @@ async def bulk_register_cmd(ctx, *, bulk_text: str = None):
         except Exception as e:
             errors.append(f"라인 {i}: {e}")
 
-    # 결과 임베드
+    # 결과 임베드 생성 (요약) — 요청자 표시 포함
     summary_embed = discord.Embed(title="등록 요약", timestamp=datetime.now(timezone.utc))
+    summary_embed.add_field(name="요청자", value=f"{created_by.get('display_name')} (ID: {created_by.get('id')})", inline=False)
     summary_embed.add_field(name="총 입력", value=str(len(lines)), inline=True)
     summary_embed.add_field(name="성공", value=str(len(added)), inline=True)
     summary_embed.add_field(name="오류", value=str(len(errors)), inline=True)
 
     if added:
+        # show up to 20 successes
         show_added = added[:20]
         summary_embed.add_field(name="성공 목록 (최대 20)", value=", ".join(show_added), inline=False)
         if len(added) > 20:
             summary_embed.add_field(name="(생략)", value=f"...외 {len(added)-20}명", inline=False)
 
     if errors:
+        # show up to 10 errors
         show_errors = errors[:10]
         summary_embed.add_field(name="오류 예시 (최대 10)", value="\n".join(show_errors), inline=False)
         if len(errors) > 10:
@@ -441,9 +539,14 @@ async def bulk_register_cmd(ctx, *, bulk_text: str = None):
 
     await ctx.send(embed=summary_embed)
 
-# ---------- 이하: 기존 명령들 (수정/닉변/삭제/구종삭제/팀/목록/기록 등) ----------
+# ---------- 수정 ----------
 @bot.command(name="수정")
 async def edit_cmd(ctx, nick: str, field: str, *, value: str):
+    """
+    예: !수정 yian position P
+    허용 필드: name, team, position, form, extra.<key>, pitch_types (콤마로 덮어쓰기)
+    수정 시 updated_at 만 갱신. 수정자 정보는 필요시 추가 가능.
+    """
     if not await ensure_db_or_warn(ctx): return
     ref = player_doc_ref(nick)
     doc = ref.get()
@@ -466,6 +569,7 @@ async def edit_cmd(ctx, nick: str, field: str, *, value: str):
     except Exception as e:
         await ctx.send(f"❌ 업데이트 실패: {e}")
 
+# ---------- 닉변 (문서 ID 바꾸기) ----------
 @bot.command(name="닉변")
 async def nickchange_cmd(ctx, oldnick: str, newnick: str):
     if not await ensure_db_or_warn(ctx): return
@@ -484,11 +588,17 @@ async def nickchange_cmd(ctx, oldnick: str, newnick: str):
     try:
         new_ref.set(data)
         old_ref.delete()
+        # 팀 로스터에 반영
         team = data.get("team")
         if team:
             t_ref = team_doc_ref(team)
-            t_ref.update({"roster": firestore.ArrayRemove([normalize_nick(oldnick)])})
-            t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(newnick)])})
+            t_ref.update({
+                "roster": firestore.ArrayRemove([normalize_nick(oldnick)])
+            })
+            t_ref.update({
+                "roster": firestore.ArrayUnion([normalize_nick(newnick)])
+            })
+        # records doc rename (copy)
         rec_old = records_doc_ref(oldnick)
         rec_old_doc = rec_old.get()
         if rec_old_doc.exists:
@@ -499,6 +609,7 @@ async def nickchange_cmd(ctx, oldnick: str, newnick: str):
     except Exception as e:
         await ctx.send(f"❌ 닉네임 변경 실패: {e}")
 
+# ---------- 삭제 ----------
 @bot.command(name="삭제")
 async def delete_cmd(ctx, nick: str):
     if not await ensure_db_or_warn(ctx): return
@@ -511,14 +622,17 @@ async def delete_cmd(ctx, nick: str):
     team = data.get("team")
     try:
         ref.delete()
+        # 팀 로스터에서 제거
         if team:
             t_ref = team_doc_ref(team)
             t_ref.update({"roster": firestore.ArrayRemove([normalize_nick(nick)])})
+        # records 삭제
         records_doc_ref(nick).delete()
         await ctx.send(f"🗑️ `{nick}` 삭제되었습니다.")
     except Exception as e:
         await ctx.send(f"❌ 삭제 실패: {e}")
 
+# ---------- 구종삭제 ----------
 @bot.command(name="구종삭제")
 async def remove_pitch_cmd(ctx, nick: str, pitch: str):
     if not await ensure_db_or_warn(ctx): return
@@ -530,6 +644,7 @@ async def remove_pitch_cmd(ctx, nick: str, pitch: str):
     try:
         d = doc.to_dict()
         current = d.get("pitch_types", [])
+        # pitch may be stored like "포심(20)" so remove if equality or startswith
         newlist = [p for p in current if not (p == pitch or p.startswith(pitch+"("))]
         if len(newlist) == len(current):
             await ctx.send(f"⚠️ `{nick}` 에 `{pitch}` 구종이 없습니다.")
@@ -539,19 +654,25 @@ async def remove_pitch_cmd(ctx, nick: str, pitch: str):
     except Exception as e:
         await ctx.send(f"❌ 실패: {e}")
 
+# ---------- 팀 / 목록 / 이적 등 ----------
 @bot.command(name="팀")
 async def team_cmd(ctx, *, teamname: str):
     if not await ensure_db_or_warn(ctx): return
     t_ref = team_doc_ref(teamname)
     t_doc = t_ref.get()
     if not t_doc.exists:
+        # 생성
         t_ref.set({"name": teamname, "created_at": now_iso(), "roster": []})
         await ctx.send(f"✅ 팀 `{teamname}` 이(가) 생성되었습니다.")
         return
     t = t_doc.to_dict()
     roster = t.get("roster", [])
     if roster:
-        await ctx.send(f"**{teamname}** — 로스터 ({len(roster)}):\n" + ", ".join(roster[:50]))
+        # fetch first 50 names for display
+        lines = []
+        for nick in roster[:50]:
+            lines.append(nick)
+        await ctx.send(f"**{teamname}** — 로스터 ({len(roster)}):\n" + ", ".join(lines))
     else:
         await ctx.send(f"**{teamname}** — 로스터가 비어있습니다.")
 
@@ -567,6 +688,7 @@ async def list_cmd(ctx, kind: str = "players"):
         if not lines:
             await ctx.send("선수 데이터가 없습니다.")
         else:
+            # chunk message if too long
             chunk_size = 1900
             text = "\n".join(lines)
             for i in range(0, len(text), chunk_size):
@@ -589,9 +711,12 @@ async def transfer_cmd(ctx, nick: str, newteam: str):
     data = p_doc.to_dict()
     oldteam = data.get("team")
     try:
+        # update player
         p_ref.update({"team": newteam, "updated_at": now_iso()})
+        # remove from old team roster
         if oldteam:
             team_doc_ref(oldteam).update({"roster": firestore.ArrayRemove([normalize_nick(nick)])})
+        # add to new team
         t_ref = team_doc_ref(newteam)
         t_ref.set({"name": newteam, "created_at": now_iso()}, merge=True)
         t_ref.update({"roster": firestore.ArrayUnion([normalize_nick(nick)])})
@@ -607,6 +732,7 @@ async def fa_cmd(ctx, nick: str):
 @bot.command(name="웨이버")
 async def waiver_cmd(ctx, nick: str):
     if not await ensure_db_or_warn(ctx): return
+    # set status
     ref = player_doc_ref(nick)
     doc = ref.get()
     if not doc.exists:
@@ -649,6 +775,7 @@ async def trade_cmd(ctx, nick1: str, nick2: str):
         t2 = d2.to_dict().get("team", "Free")
         r1.update({"team": t2, "updated_at": now_iso()})
         r2.update({"team": t1, "updated_at": now_iso()})
+        # roster updates
         if t1:
             team_doc_ref(t1).update({"roster": firestore.ArrayRemove([normalize_nick(nick1)])})
             if t2:
