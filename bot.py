@@ -41,6 +41,8 @@ except Exception:
 BOT_PREFIX = os.getenv("BOT_PREFIX", "!")
 INTENTS = discord.Intents.default()
 INTENTS.message_content = True
+TOKEN = os.getenv("DISCORD_TOKEN")
+bot.run(TOKEN)
 
 # 마인크래프트 닉네임 검증을 끄고 싶으면 VERIFY_MC=false 환경변수 설정
 VERIFY_MC = os.getenv("VERIFY_MC", "true").lower() not in ("0", "false", "no", "off")
@@ -1480,3 +1482,4 @@ if __name__ == "__main__":
                 loop.run_until_complete(close_http_session())
         except Exception:
             pass
+
