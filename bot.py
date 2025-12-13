@@ -1480,6 +1480,3 @@ if __name__ == "__main__":
                 loop.run_until_complete(close_http_session())
         except Exception:
             pass
-
-TOKEN = os.getenv("DISCORD_TOKEN")
-bot.run(TOKEN)
