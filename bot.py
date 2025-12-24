@@ -1,6 +1,6 @@
 # ==============================
 # Discord + Firebase Baseball Bot
-# STEP 1: Slash only / Grouped Commands / Permission Split
+# STEP 1 (FIXED): Slash only / Grouped Commands / Permission Split
 # ==============================
 
 import os
@@ -30,7 +30,8 @@ VERIFY_MC = os.getenv("VERIFY_MC", "true").lower() not in ("0", "false", "no", "
 DEFAULT_PITCH_POWER = int(os.getenv("DEFAULT_PITCH_POWER", "20"))
 GUILD_ID = os.getenv("GUILD_ID")
 
-bot = commands.Bot(command_prefix=None, intents=INTENTS)
+# 🔥 중요: prefix는 None이 아니라 "절대 안 쓰일 값"
+bot = commands.Bot(command_prefix="__disabled__", intents=INTENTS)
 SYNCED = False
 
 # ==============================
@@ -107,7 +108,7 @@ class PlayerGroup(app_commands.Group):
     async def info(self, interaction: discord.Interaction, 닉네임: str):
         doc = player_ref(닉네임).get()
         if not doc.exists:
-            await interaction.response.send_message("❌ 선수 없음")
+            await interaction.response.send_message("❌ 선수 없음", ephemeral=True)
             return
         await interaction.response.send_message(embed=make_player_embed(doc.to_dict()))
 
@@ -135,7 +136,7 @@ class PlayerGroup(app_commands.Group):
     async def delete(self, interaction: discord.Interaction, 닉네임: str):
         ref = player_ref(닉네임)
         if not ref.get().exists:
-            await interaction.response.send_message("❌ 선수 없음")
+            await interaction.response.send_message("❌ 선수 없음", ephemeral=True)
             return
         ref.delete()
         await interaction.response.send_message(f"🗑️ `{닉네임}` 삭제 완료")
@@ -156,7 +157,7 @@ class TeamGroup(app_commands.Group):
     async def view(self, interaction: discord.Interaction, 팀명: str):
         doc = team_ref(팀명).get()
         if not doc.exists:
-            await interaction.response.send_message("❌ 팀 없음")
+            await interaction.response.send_message("❌ 팀 없음", ephemeral=True)
             return
         roster = doc.to_dict().get("roster", [])
         await interaction.response.send_message(
@@ -179,19 +180,19 @@ class AdminGroup(app_commands.Group):
     @app_commands.command(name="청소", description="메시지 삭제")
     @app_commands.check(admin_only)
     async def purge(self, interaction: discord.Interaction, 개수: int):
-        deleted = await interaction.channel.purge(limit=min(max(개수,1),1000))
+        deleted = await interaction.channel.purge(limit=min(max(개수, 1), 1000))
         await interaction.response.send_message(f"🧹 {len(deleted)}개 삭제", ephemeral=True)
 
     @app_commands.command(name="가져오기파일", description="파일 기반 선수 등록")
     @app_commands.check(admin_only)
     async def import_file(self, interaction: discord.Interaction):
         await interaction.response.send_message(
-            "⚠️ 파일 업로드는 STEP 2에서 유지됩니다. 현재는 구조만 유지.",
+            "⚠️ 파일 업로드 로직은 STEP 2에서 완성됩니다.",
             ephemeral=True
         )
 
 # ==============================
-# 등록
+# 그룹 등록
 # ==============================
 bot.tree.add_command(PlayerGroup())
 bot.tree.add_command(TeamGroup())
@@ -211,9 +212,10 @@ async def on_ready():
         await bot.tree.sync()
     SYNCED = True
     print("✅ Slash 명령어 동기화 완료")
+    print("등록된 명령어:", [c.name for c in bot.tree.get_commands()])
 
 # ==============================
-# 에러
+# 에러 처리
 # ==============================
 @bot.event
 async def on_app_command_error(interaction, error):
@@ -227,4 +229,6 @@ async def on_app_command_error(interaction, error):
 # ==============================
 if __name__ == "__main__":
     token = os.getenv("DISCORD_TOKEN")
+    if not token:
+        raise RuntimeError("DISCORD_TOKEN 환경변수가 없습니다.")
     bot.run(token)
