@@ -1,17 +1,14 @@
 # ==============================
 # Discord + Firebase Baseball Bot
-# STEP 1 (FIXED): Slash only / Grouped Commands / Permission Split
+# STEP 2: Slash only / Grouped Commands / Help Pagination
 # ==============================
 
 import os
 import json
 import asyncio
-import re
 from datetime import datetime, timezone
-from typing import Optional, Dict, List, Tuple
-from urllib.parse import quote_plus
+from typing import Optional, List
 
-import aiohttp
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -25,12 +22,9 @@ from firebase_admin import credentials, firestore
 INTENTS = discord.Intents.default()
 INTENTS.members = True
 
-ADMIN_USER_ID = 742989026625060914  # 너의 디스코드 ID
-VERIFY_MC = os.getenv("VERIFY_MC", "true").lower() not in ("0", "false", "no", "off")
-DEFAULT_PITCH_POWER = int(os.getenv("DEFAULT_PITCH_POWER", "20"))
+ADMIN_USER_ID = 742989026625060914
 GUILD_ID = os.getenv("GUILD_ID")
 
-# 🔥 중요: prefix는 None이 아니라 "절대 안 쓰일 값"
 bot = commands.Bot(command_prefix="__disabled__", intents=INTENTS)
 SYNCED = False
 
@@ -83,7 +77,7 @@ def team_ref(team: str):
     return db.collection("teams").document(normalize_team(team))
 
 # ==============================
-# Embed
+# Embed (선수)
 # ==============================
 def make_player_embed(d: dict) -> discord.Embed:
     embed = discord.Embed(
@@ -113,22 +107,15 @@ class PlayerGroup(app_commands.Group):
         await interaction.response.send_message(embed=make_player_embed(doc.to_dict()))
 
     @app_commands.command(name="추가", description="선수 추가")
-    async def add(
-        self,
-        interaction: discord.Interaction,
-        닉네임: str,
-        팀: Optional[str] = None,
-        포지션: Optional[str] = "N/A"
-    ):
-        data = {
+    async def add(self, interaction: discord.Interaction, 닉네임: str):
+        player_ref(닉네임).set({
             "nickname": 닉네임,
-            "team": normalize_team(팀),
-            "position": 포지션,
+            "team": "Free",
+            "position": "N/A",
             "pitch_types": [],
             "created_at": now_iso(),
             "updated_at": now_iso()
-        }
-        player_ref(닉네임).set(data)
+        })
         await interaction.response.send_message(f"✅ `{닉네임}` 선수 등록 완료")
 
     @app_commands.command(name="삭제", description="선수 삭제 (관리자)")
@@ -183,13 +170,58 @@ class AdminGroup(app_commands.Group):
         deleted = await interaction.channel.purge(limit=min(max(개수, 1), 1000))
         await interaction.response.send_message(f"🧹 {len(deleted)}개 삭제", ephemeral=True)
 
-    @app_commands.command(name="가져오기파일", description="파일 기반 선수 등록")
-    @app_commands.check(admin_only)
-    async def import_file(self, interaction: discord.Interaction):
-        await interaction.response.send_message(
-            "⚠️ 파일 업로드 로직은 STEP 2에서 완성됩니다.",
-            ephemeral=True
+# ==============================
+# /도움 페이지 View
+# ==============================
+HELP_PAGES = [
+    ("📘 선수 명령어", 
+     "`/선수 정보`\n`/선수 추가`\n`/선수 삭제`"),
+    ("📕 팀 명령어", 
+     "`/팀 생성`\n`/팀 조회`\n`/팀 삭제`"),
+    ("📗 기록 명령어", 
+     "`/기록 추가타자`\n`/기록 추가투수`\n`/기록 보기`\n`/기록 리셋`"),
+    ("📙 이적 명령어", 
+     "`/이적 이적`\n`/이적 영입`\n`/이적 트레이드`\n`/이적 방출`\n`/이적 웨이버`"),
+    ("🛠 관리 명령어", 
+     "`/관리 청소`\n`/관리 가져오기파일`")
+]
+
+class HelpView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=120)
+        self.page = 0
+
+    def make_embed(self):
+        title, desc = HELP_PAGES[self.page]
+        embed = discord.Embed(
+            title=title,
+            description=desc,
+            color=discord.Color.green()
         )
+        embed.set_footer(text=f"페이지 {self.page + 1}/{len(HELP_PAGES)}")
+        return embed
+
+    @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
+    async def prev(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = (self.page - 1) % len(HELP_PAGES)
+        await interaction.response.edit_message(embed=self.make_embed(), view=self)
+
+    @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary)
+    async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = (self.page + 1) % len(HELP_PAGES)
+        await interaction.response.edit_message(embed=self.make_embed(), view=self)
+
+# ==============================
+# /도움 명령어
+# ==============================
+@bot.tree.command(name="도움", description="명령어 도움말 보기")
+async def slash_help(interaction: discord.Interaction):
+    view = HelpView()
+    await interaction.response.send_message(
+        embed=view.make_embed(),
+        view=view,
+        ephemeral=True
+    )
 
 # ==============================
 # 그룹 등록
