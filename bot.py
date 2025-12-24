@@ -372,14 +372,20 @@ def split_into_blocks(text: str) -> List[List[str]]:
 
 def parse_pitch_line(pitch_line: str) -> List[str]:
     """
-    구종 라인 파싱 & 정규화:
-    - 토큰을 공백으로 분리 (쉼표 허용)
-    - 숫자 없는 경우 DEFAULT_PITCH_POWER 추가
-    - 결과 예: 포심(20), 슬라이더(40)
+    구종 라인 파싱 & 정규화 (개선된 토크나이저)
+    - 쉼표(,) 또는 공백으로 분리
+    - 구종에 이미 숫자(예: 포심(40))가 있으면 그대로 사용
+    - 숫자 없으면 DEFAULT_PITCH_POWER 부여
     """
-    tokens = [t.strip().rstrip(",") for t in re.split(r'\s+', pitch_line.strip()) if t.strip()]
+    if not pitch_line:
+        return []
+    # 구종토큰: "포심(40)", "슬라이더(40)", "포심", "커브( 30 )" 등 잡아냄
+    tokens = re.findall(r'([^\s,]+(?:\(\s*\d+\s*\))?|[^\s,]+)', pitch_line.strip())
     out = []
     for tok in tokens:
+        tok = tok.strip().rstrip(",")
+        if not tok:
+            continue
         norm = normalize_pitch_token(tok)
         if norm:
             out.append(norm)
@@ -387,8 +393,10 @@ def parse_pitch_line(pitch_line: str) -> List[str]:
 
 def parse_block_to_player(block_lines: List[str]):
     """
-    블록(2개 이상의 라인 또는 1라인)을 선수 데이터로 변환.
-    반환: dict with keys: nickname, name, team (or None), position, pitch_types(list), form
+    블록(1+ 라인)을 선수 데이터로 변환.
+    - nickname, name, team (or None), position, pitch_types(list), form 반환
+    - 첫 줄에서 '닉네임 (폼) [팀] ...' 처럼 닉네임 바로 뒤의 (폼)과 [팀]만 추출하고
+      그 이후의 텍스트(예: 구종(40) ...)는 제거하지 않고 pitch 파서에 넘깁니다.
     """
     nickname = ""
     name = ""
@@ -397,7 +405,7 @@ def parse_block_to_player(block_lines: List[str]):
     pitch_types = []
     form = ""
 
-    # 파이프 형식(한 줄) 처리
+    # 파이프 형식(한 줄) 우선 처리(기존 로직 유지)
     if len(block_lines) == 1 and '|' in block_lines[0]:
         parts = block_lines[0].split("|")
         if len(parts) >= 1:
@@ -417,35 +425,40 @@ def parse_block_to_player(block_lines: List[str]):
             name = nickname
         return {"nickname": nickname, "name": name, "team": team, "position": position, "pitch_types": pitch_types, "form": form}
 
-    # 라인 기반 파싱
+    # --- 첫 줄에서 nickname / (form) / [team] 만 캡처, 나머지(구종)는 보존 ---
     first = block_lines[0]
-    form_match = re.search(r'\(([^)]*)\)', first)
-    team_match = re.search(r'\[([^\]]*)\]', first)
-    m = re.match(r'^([^\s\(\[]+)', first)
+    # 정규식: 닉네임, 선택적 (폼), 선택적 [팀], 그리고 나머지(rest)
+    m = re.match(r'^\s*([^\s\(\[]+)(?:\s*\(([^)]*)\))?(?:\s*\[([^\]]*)\])?(.*)$', first)
     if m:
         nickname = m.group(1).strip()
+        form = (m.group(2) or "").strip()
+        team = normalize_team_name(m.group(3).strip()) if m.group(3) else None
+        rest = (m.group(4) or "").strip()
     else:
-        nickname = first.strip()
-    if form_match:
-        form = form_match.group(1).strip()
-    if team_match:
-        team = normalize_team_name(team_match.group(1).strip())
+        # 안전망: 기존 방식 유지
+        m2 = re.match(r'^([^\s\(\[]+)', first)
+        if m2:
+            nickname = m2.group(1).strip()
+            rest = first[len(nickname):].strip()
+        else:
+            nickname = first.strip()
+            rest = ""
 
     name = nickname
 
-    # pitch lines: 나머지 라인 전부 합쳐서 파싱
+    # pitch lines: 두 번째 라인 이후(또는 첫 줄 rest)에 있는 구종 텍스트 합치기
+    pitch_text_parts = []
+    if rest:
+        pitch_text_parts.append(rest)
     if len(block_lines) >= 2:
-        pitch_text = " ".join(block_lines[1:])
+        # 나머지 라인들은 구종이나 추가 정보로 간주
+        pitch_text_parts.append(" ".join(block_lines[1:]).strip())
+    pitch_text = " ".join([p for p in pitch_text_parts if p]).strip()
+
+    if pitch_text:
         pitch_types = parse_pitch_line(pitch_text)
     else:
-        # 한 라인에 구종이 함께 있는 경우(예: nick 포심(40) 슬라이더(20) )
-        rest = first[len(nickname):].strip()
-        # 제거: 폼, 팀 표기
-        rest = re.sub(r'\([^\)]*\)', '', rest)
-        rest = re.sub(r'\[[^\]]*\]', '', rest)
-        rest = rest.strip()
-        if rest:
-            pitch_types = parse_pitch_line(rest)
+        pitch_types = []
 
     return {"nickname": nickname, "name": name, "team": team, "position": position, "pitch_types": pitch_types, "form": form}
 
