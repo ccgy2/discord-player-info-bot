@@ -2,11 +2,12 @@
 """
 Discord + Firebase (Firestore) Baseball Player Manager Bot
 
-Full implementation (prefix + slash commands)
 - Python 3.8+
 - discord.py (with app_commands)
 - Firestore collections: players, teams, records, aliases
-- All prefix commands kept. All major commands mirrored as slash commands.
+- Provides both prefix (!) commands and slash (/) commands.
+- Improved startup sync logic for slash commands and added a basic /청소 command
+  so that "/" UI shows numeric "개수" value like in the screenshots.
 """
 
 import os
@@ -26,7 +27,7 @@ from discord import app_commands
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-# dotenv
+# dotenv (optional)
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -49,6 +50,7 @@ DEFAULT_PITCH_POWER = int(os.getenv("DEFAULT_PITCH_POWER", "20"))
 GUILD_ID = os.getenv("GUILD_ID")  # e.g., "123456789012345678"
 
 bot = commands.Bot(command_prefix=BOT_PREFIX, intents=INTENTS, help_command=None)
+SYNCED = False  # ensure we attempt sync once
 
 # ---------- Firebase 초기화 ----------
 def init_firebase():
@@ -126,7 +128,10 @@ async def ensure_db_or_warn_interaction(interaction: discord.Interaction) -> boo
         try:
             await interaction.response.send_message("❌ 데이터베이스가 초기화되어 있지 않습니다. 관리자에게 문의하세요.", ephemeral=True)
         except Exception:
-            await interaction.followup.send("❌ 데이터베이스가 초기화되어 있지 않습니다. 관리자에게 문의하세요.", ephemeral=True)
+            try:
+                await interaction.followup.send("❌ 데이터베이스가 초기화되어 있지 않습니다. 관리자에게 문의하세요.", ephemeral=True)
+            except Exception:
+                pass
         return False
     return True
 
@@ -413,7 +418,7 @@ def parse_block_to_player(block_lines: List[str]) -> dict:
     return {"nickname": nickname, "name": name, "team": team, "position": position, "pitch_types": pitch_types, "form": form}
 
 # -------------------------
-# Prefix commands (existing)
+# Prefix commands (existing + a couple utilities)
 # -------------------------
 @bot.command(name="정보")
 async def info_cmd(ctx, nick: str):
@@ -439,6 +444,21 @@ async def info_detail_cmd(ctx, nick: str):
     if extra:
         embed.add_field(name="추가정보", value=json.dumps(extra, ensure_ascii=False), inline=False)
     await ctx.send(embed=embed)
+
+@bot.command(name="도움")
+async def help_cmd(ctx):
+    await ctx.send(get_help_text())
+
+# 간단한 청소 명령 (prefix)
+@bot.command(name="청소")
+@commands.has_permissions(manage_messages=True)
+async def purge_cmd(ctx, count: int = 50):
+    try:
+        limit = max(1, min(1000, int(count)))
+        deleted = await ctx.channel.purge(limit=limit)
+        await ctx.send(f"🧹 삭제 완료: {len(deleted)} 개의 메시지", delete_after=5)
+    except Exception as e:
+        await ctx.send(f"실패: {e}")
 
 # ---------- 단일/다중 추가 (파이프 or 멀티라인 지원, append 동작 when existing) ----------
 @bot.command(name="추가")
@@ -1359,6 +1379,8 @@ async def on_command_error(ctx, error):
         await ctx.send("인자가 부족합니다. `!도움` 로 사용법을 확인하세요.")
     elif isinstance(error, commands.CommandNotFound):
         return
+    elif isinstance(error, commands.MissingPermissions):
+        await ctx.send("권한이 부족합니다.")
     else:
         try:
             await ctx.send(f"명령 실행 중 오류가 발생했습니다: `{error}`")
@@ -1424,49 +1446,6 @@ async def slash_team(interaction: discord.Interaction, teamname: str):
             await interaction.followup.send(f"**{team_norm}** — 로스터가 비어있습니다.")
     except Exception as e:
         await interaction.followup.send(f"명령 처리 중 오류: {e}", ephemeral=True)
-
-@bot.tree.command(name="팀삭제", description="팀 삭제: 선수들을 FA로 이동시킵니다")
-@app_commands.describe(teamname="삭제할 팀 이름")
-async def slash_team_delete(interaction: discord.Interaction, teamname: str):
-    if not await ensure_db_or_warn_interaction(interaction): return
-    await interaction.response.defer(thinking=True)
-    try:
-        team_norm = normalize_team_name(teamname)
-        t_ref = team_doc_ref(team_norm)
-        t_doc = t_ref.get()
-        if not t_doc.exists:
-            await interaction.followup.send(f"❌ 팀 `{team_norm}` 이(가) 존재하지 않습니다.")
-            return
-        t_data = t_doc.to_dict() or {}
-        roster = t_data.get("roster", []) or []
-        moved = []
-        errors = []
-        fa_ref = team_doc_ref("FA")
-        fa_ref.set({"name": "FA", "created_at": now_iso()}, merge=True)
-        for nick_norm in roster:
-            try:
-                p_ref = db.collection("players").document(nick_norm)
-                p_doc = p_ref.get()
-                if not p_doc.exists:
-                    errors.append(f"{nick_norm}: 선수 데이터 없음")
-                    continue
-                p_ref.update({"team": "FA", "updated_at": now_iso()})
-                fa_ref.update({"roster": firestore.ArrayUnion([normalize_nick(nick_norm)])})
-                moved.append(nick_norm)
-            except Exception as e:
-                errors.append(f"{nick_norm}: {e}")
-        t_ref.delete()
-        embed = discord.Embed(title="팀 삭제 완료", description=f"팀 `{team_norm}` 을(를) 삭제하고 해당 선수들을 FA로 이동했습니다.", color=discord.Color.red(), timestamp=datetime.now(timezone.utc))
-        embed.add_field(name="원팀", value=team_norm, inline=False)
-        embed.add_field(name="이동(FA) 수", value=str(len(moved)), inline=True)
-        embed.add_field(name="오류 수", value=str(len(errors)), inline=True)
-        if moved:
-            embed.add_field(name="이동된 선수 (최대 50)", value=", ".join(moved[:50]), inline=False)
-        if errors:
-            embed.add_field(name="오류 예시 (최대 10)", value="\n".join(errors[:10]), inline=False)
-        await interaction.followup.send(embed=embed)
-    except Exception as e:
-        await interaction.followup.send(f"❌ 팀 삭제 중 오류 발생: {e}", ephemeral=True)
 
 @bot.tree.command(name="도움", description="사용 가능한 명령어 목록과 간단한 사용법을 보여줍니다.")
 async def slash_help(interaction: discord.Interaction):
@@ -1738,8 +1717,8 @@ async def slash_register(interaction: discord.Interaction, bulk_text: str):
         summary_embed.colour = discord.Color.green()
     await interaction.followup.send(embed=summary_embed)
 
-# ---------- Slash: 파일 가져오기 ----------
-@bot.tree.command(name="가져오기파일", description="첨부한 .txt/.csv 파일을 블록 단위로 읽어 등록합니다.")
+# ---------- Slash: 가져오기파일 (note) ----------
+@bot.tree.command(name="가져오기파일", description="(주의) 파일 첨부는 슬래시에서 제한이 있으므로 prefix !가져오기파일 권장")
 @app_commands.describe(team_override="팀명(선택)", mode="모드: skip(기본) 또는 overwrite(덮어쓰기)")
 async def slash_import_file(interaction: discord.Interaction, team_override: Optional[str] = None, mode: Optional[str] = "skip"):
     if not await ensure_db_or_warn_interaction(interaction): return
@@ -1857,7 +1836,7 @@ async def slash_edit(interaction: discord.Interaction, payload: str):
     except Exception as e:
         await interaction.followup.send(f"❌ 업데이트 실패: {e}")
 
-# ---------- Slash: 이적 / 영입 / 구종삭제 / 삭제 / 기록추가 등 (이미 implemented above) ----------
+# ---------- Slash: 이적 (implemented earlier via prefix) ----------
 @bot.tree.command(name="이적", description="선수 이적 (팀 변경)")
 @app_commands.describe(nick="선수 닉네임", newteam="이적시킬 팀 이름")
 async def slash_transfer(interaction: discord.Interaction, nick: str, newteam: str):
@@ -1909,32 +1888,48 @@ async def slash_transfer(interaction: discord.Interaction, nick: str, newteam: s
     except Exception as e:
         await interaction.followup.send(f"❌ 이적 실패: {e}")
 
-# (Other slash implementations for 영입/구종삭제/삭제/기록추가/기록보기/기록리셋 were included above already.)
+# ---------- 새로 추가: Slash 청소 (숫자 value 입력 UI 보이도록) ----------
+@bot.tree.command(name="청소", description="채널에서 최근 메시지 여러개를 삭제합니다. (관리자 권한 필요)")
+@app_commands.describe(개수="삭제할 메시지 수 (1-1000)")
+async def slash_purge(interaction: discord.Interaction, 개수: int):
+    if not await ensure_db_or_warn_interaction(interaction): return
+    await interaction.response.defer(thinking=True)
+    try:
+        # permission check
+        if not interaction.user.guild_permissions.manage_messages:
+            await interaction.followup.send("권한 부족: 메시지 관리 권한(manage_messages)이 필요합니다.", ephemeral=True)
+            return
+        limit = max(1, min(1000, int(개수)))
+        channel = interaction.channel
+        deleted = await channel.purge(limit=limit)
+        await interaction.followup.send(f"🧹 삭제 완료: {len(deleted)} 개의 메시지", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"실패: {e}", ephemeral=True)
 
 # ---------- on_ready: sync slash commands ----------
 @bot.event
 async def on_ready():
+    global SYNCED
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    # sync to dev guild if provided, otherwise global sync
-    if GUILD_ID:
+    # Attempt to sync once (guild-first if GUILD_ID provided)
+    if not SYNCED:
         try:
-            gid = int(GUILD_ID)
-            guild_obj = discord.Object(id=gid)
-            await bot.tree.sync(guild=guild_obj)
-            print(f"Slash commands synced to guild {GUILD_ID}")
-        except Exception as e:
-            print("Guild sync failed, trying global sync:", e)
-            try:
+            if GUILD_ID:
+                try:
+                    gid = int(GUILD_ID)
+                    guild_obj = discord.Object(id=gid)
+                    await bot.tree.sync(guild=guild_obj)
+                    print(f"Slash commands synced to guild {GUILD_ID}")
+                except Exception as e:
+                    print("Guild sync failed, trying global sync:", e)
+                    await bot.tree.sync()
+                    print("Global slash command sync complete")
+            else:
                 await bot.tree.sync()
                 print("Global slash command sync complete")
-            except Exception as e2:
-                print("Global sync also failed:", e2)
-    else:
-        try:
-            await bot.tree.sync()
-            print("Global slash command sync complete")
+            SYNCED = True
         except Exception as e:
-            print("Slash command sync failed:", e)
+            print("Slash command sync failed on_ready:", e)
 
 # ---------- 에러 처리 for app commands ----------
 @bot.event
