@@ -152,10 +152,37 @@ class TeamGroup(app_commands.Group):
         )
 
     @app_commands.command(name="삭제", description="팀 삭제 (관리자)")
-    @app_commands.check(admin_only)
     async def delete(self, interaction: discord.Interaction, 팀명: str):
-        team_ref(팀명).delete()
-        await interaction.response.send_message(f"🗑️ 팀 `{팀명}` 삭제 완료")
+    # 🔐 권한 체크
+    if not is_admin(interaction):
+        await interaction.response.send_message(
+            "⛔ 이 명령어는 관리자만 사용할 수 있습니다.",
+            ephemeral=True
+        )
+        return
+
+    # ⏳ 반드시 먼저 defer
+    await interaction.response.defer(ephemeral=True)
+
+    ref = team_ref(팀명)
+    if not ref.get().exists:
+        await interaction.followup.send(
+            f"❌ 팀 `{팀명}` 이(가) 존재하지 않습니다.",
+            ephemeral=True
+        )
+        return
+
+    try:
+        ref.delete()
+        await interaction.followup.send(
+            f"🗑️ 팀 `{팀명}` 삭제 완료",
+            ephemeral=True
+        )
+    except Exception as e:
+        await interaction.followup.send(
+            f"❌ 팀 삭제 실패: {e}",
+            ephemeral=True
+        )
 
 # ==============================
 # 그룹: 관리
@@ -164,11 +191,31 @@ class AdminGroup(app_commands.Group):
     def __init__(self):
         super().__init__(name="관리", description="관리자 명령어")
 
-    @app_commands.command(name="청소", description="메시지 삭제")
-    @app_commands.check(admin_only)
-    async def purge(self, interaction: discord.Interaction, 개수: int):
-        deleted = await interaction.channel.purge(limit=min(max(개수, 1), 1000))
-        await interaction.response.send_message(f"🧹 {len(deleted)}개 삭제", ephemeral=True)
+    @app_commands.command(name="청소", description="메시지 삭제 (관리자)")
+async def purge(self, interaction: discord.Interaction, 개수: int):
+    # 🔐 권한 체크
+    if not is_admin(interaction):
+        await interaction.response.send_message(
+            "⛔ 이 명령어는 관리자만 사용할 수 있습니다.",
+            ephemeral=True
+        )
+        return
+
+    # ⏳ 먼저 defer (이거 없으면 무조건 타임아웃)
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        limit = max(1, min(1000, 개수))
+        deleted = await interaction.channel.purge(limit=limit)
+        await interaction.followup.send(
+            f"🧹 삭제 완료: {len(deleted)}개 메시지",
+            ephemeral=True
+        )
+    except Exception as e:
+        await interaction.followup.send(
+            f"❌ 청소 실패: {e}",
+            ephemeral=True
+        )
 
 # ==============================
 # /도움 페이지 View
@@ -264,4 +311,5 @@ if __name__ == "__main__":
     if not token:
         raise RuntimeError("DISCORD_TOKEN 환경변수가 없습니다.")
     bot.run(token)
+
 
