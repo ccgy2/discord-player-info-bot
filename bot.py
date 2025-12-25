@@ -86,7 +86,7 @@ def make_player_embed(d: dict) -> discord.Embed:
     return embed
 
 # ==============================
-# 그룹: 선수
+# 그룹: 선수 (누구나 사용 가능)
 # ==============================
 class PlayerGroup(app_commands.Group):
     def __init__(self):
@@ -94,19 +94,16 @@ class PlayerGroup(app_commands.Group):
 
     @app_commands.command(name="정보", description="선수 기본 정보 조회")
     async def info(self, interaction: discord.Interaction, 닉네임: str):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
 
         doc = player_ref(닉네임).get()
         if not doc.exists:
-            await interaction.followup.send("❌ 선수 없음", ephemeral=True)
+            await interaction.followup.send("❌ 선수 없음")
             return
 
-        await interaction.followup.send(
-            embed=make_player_embed(doc.to_dict()),
-            ephemeral=True
-        )
+        await interaction.followup.send(embed=make_player_embed(doc.to_dict()))
 
-    @app_commands.command(name="추가", description="선수 추가")
+    @app_commands.command(name="추가", description="선수 추가 (누구나 가능)")
     async def add(self, interaction: discord.Interaction, 닉네임: str):
         await interaction.response.defer(ephemeral=True)
 
@@ -117,10 +114,39 @@ class PlayerGroup(app_commands.Group):
             "pitch_types": [],
             "created_at": now_iso(),
             "updated_at": now_iso()
-        })
+        }, merge=True)
 
         await interaction.followup.send(
-            f"✅ `{닉네임}` 선수 등록 완료",
+            f"✅ `{닉네임}` 선수 등록/갱신 완료",
+            ephemeral=True
+        )
+
+    @app_commands.command(name="수정", description="선수 정보 수정 (누구나 가능)")
+    async def edit(
+        self,
+        interaction: discord.Interaction,
+        닉네임: str,
+        포지션: str = None,
+        팀명: str = None
+    ):
+        await interaction.response.defer(ephemeral=True)
+
+        ref = player_ref(닉네임)
+        doc = ref.get()
+        if not doc.exists:
+            await interaction.followup.send("❌ 선수 없음", ephemeral=True)
+            return
+
+        updates = {"updated_at": now_iso()}
+        if 포지션:
+            updates["position"] = 포지션
+        if 팀명:
+            updates["team"] = normalize_team(팀명)
+
+        ref.update(updates)
+
+        await interaction.followup.send(
+            f"✏️ `{닉네임}` 선수 정보 수정 완료",
             ephemeral=True
         )
 
@@ -153,7 +179,7 @@ class TeamGroup(app_commands.Group):
     def __init__(self):
         super().__init__(name="팀", description="팀 관리")
 
-    @app_commands.command(name="생성", description="팀 생성")
+    @app_commands.command(name="생성", description="팀 생성 (누구나 가능)")
     async def create(self, interaction: discord.Interaction, 팀명: str):
         await interaction.response.defer(ephemeral=True)
 
@@ -161,26 +187,25 @@ class TeamGroup(app_commands.Group):
             "name": 팀명,
             "created_at": now_iso(),
             "roster": []
-        })
+        }, merge=True)
 
         await interaction.followup.send(
-            f"✅ 팀 `{팀명}` 생성",
+            f"✅ 팀 `{팀명}` 생성 완료",
             ephemeral=True
         )
 
     @app_commands.command(name="조회", description="팀 로스터 조회")
     async def view(self, interaction: discord.Interaction, 팀명: str):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
 
         doc = team_ref(팀명).get()
         if not doc.exists:
-            await interaction.followup.send("❌ 팀 없음", ephemeral=True)
+            await interaction.followup.send("❌ 팀 없음")
             return
 
         roster = doc.to_dict().get("roster", [])
         await interaction.followup.send(
-            f"**{팀명}** 로스터 ({len(roster)}):\n" + ", ".join(roster),
-            ephemeral=True
+            f"**{팀명}** 로스터 ({len(roster)}):\n" + ", ".join(roster)
         )
 
     @app_commands.command(name="삭제", description="팀 삭제 (관리자)")
@@ -238,8 +263,8 @@ class AdminGroup(app_commands.Group):
 # /도움 페이지
 # ==============================
 HELP_PAGES = [
-    ("📘 선수 명령어", "`/선수 정보`\n`/선수 추가`\n`/선수 삭제`"),
-    ("📕 팀 명령어", "`/팀 생성`\n`/팀 조회`\n`/팀 삭제`"),
+    ("📘 선수 명령어", "`/선수 정보`\n`/선수 추가`\n`/선수 수정`\n`/선수 삭제(관리자)`"),
+    ("📕 팀 명령어", "`/팀 생성`\n`/팀 조회`\n`/팀 삭제(관리자)`"),
     ("🛠 관리 명령어", "`/관리 청소`"),
 ]
 
