@@ -264,3 +264,4 @@ if __name__ == "__main__":
     if not token:
         raise RuntimeError("DISCORD_TOKEN 환경변수가 없습니다.")
     bot.run(token)
+
