@@ -151,8 +151,15 @@ class TeamGroup(app_commands.Group):
             f"**{팀명}** 로스터 ({len(roster)}):\n" + ", ".join(roster)
         )
 
-    @app_commands.command(name="삭제", description="팀 삭제 (관리자)")
-    async def delete(self, interaction: discord.Interaction, 팀명: str):
+    @app_commands.command(
+        name="삭제",
+        description="팀을 삭제합니다 (관리자 전용)"
+    )
+    async def delete(
+        self,
+        interaction: discord.Interaction,
+        팀명: str
+    ):
     # 🔐 권한 체크
     if not is_admin(interaction):
         await interaction.response.send_message(
@@ -184,6 +191,7 @@ class TeamGroup(app_commands.Group):
             ephemeral=True
         )
 
+
 # ==============================
 # 그룹: 관리
 # ==============================
@@ -191,8 +199,15 @@ class AdminGroup(app_commands.Group):
     def __init__(self):
         super().__init__(name="관리", description="관리자 명령어")
 
-    @app_commands.command(name="청소", description="메시지 삭제 (관리자)")
-async def purge(self, interaction: discord.Interaction, 개수: int):
+    @app_commands.command(
+    name="청소",
+    description="메시지를 여러 개 삭제합니다 (관리자 전용)"
+    )
+    async def purge(
+        self,
+        interaction: discord.Interaction,
+        개수: int
+    ):
     # 🔐 권한 체크
     if not is_admin(interaction):
         await interaction.response.send_message(
@@ -201,7 +216,7 @@ async def purge(self, interaction: discord.Interaction, 개수: int):
         )
         return
 
-    # ⏳ 먼저 defer (이거 없으면 무조건 타임아웃)
+    # ⏳ 반드시 먼저 defer
     await interaction.response.defer(ephemeral=True)
 
     try:
@@ -216,6 +231,7 @@ async def purge(self, interaction: discord.Interaction, 개수: int):
             f"❌ 청소 실패: {e}",
             ephemeral=True
         )
+
 
 # ==============================
 # /도움 페이지 View
@@ -311,5 +327,6 @@ if __name__ == "__main__":
     if not token:
         raise RuntimeError("DISCORD_TOKEN 환경변수가 없습니다.")
     bot.run(token)
+
 
 
