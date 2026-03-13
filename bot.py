@@ -50,6 +50,11 @@ DEFAULT_PITCH_POWER = int(os.getenv("DEFAULT_PITCH_POWER", "20"))
 
 bot = commands.Bot(command_prefix=BOT_PREFIX, intents=INTENTS, help_command=None)
 
+async def setup_hook():
+    await bot.load_extension("cogs.pdf_ai")
+
+bot.setup_hook = setup_hook
+
 # ---------- Firebase 초기화 ----------
 def init_firebase():
     # 이미 초기화 되어 있으면 기존 client 반환
