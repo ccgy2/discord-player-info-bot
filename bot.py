@@ -1461,6 +1461,21 @@ async def reset_records_cmd(ctx, nick: str, typ: str):
     except Exception as e:
         await ctx.send(f"❌ 실패: {e}")
 
+# =========================
+# COG 자동 로드
+# =========================
+async def load_cogs():
+    for filename in os.listdir("./cogs"):
+        if filename.endswith(".py"):
+            await bot.load_extension(f"cogs.{filename[:-3]}")
+
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user}")
+    await load_cogs()
+
+bot.run(os.getenv("DISCORD_TOKEN"))
+
 # ---------- 에러 처리 ----------
 @bot.event
 async def on_command_error(ctx, error):
