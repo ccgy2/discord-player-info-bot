@@ -238,10 +238,5 @@ class PDFAI(commands.Cog):
         await interaction.response.send_message(msg[:2000])
 
 async def setup(bot):
-
-    cog = PDFAI(bot)
-
-    await bot.add_cog(cog)
-
-    bot.tree.add_command(cog.slash_question)
+    await bot.add_cog(PDFAI(bot))
     bot.tree.add_command(cog.slash_article)
