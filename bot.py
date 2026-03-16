@@ -53,6 +53,7 @@ bot = commands.Bot(command_prefix=BOT_PREFIX, intents=INTENTS, help_command=None
 async def setup_hook():
     await bot.load_extension("cogs.pdf_ai")
     await bot.load_extension("cogs.warn_system")
+    await bot.load_extension("cogs.vote_check")
 
 bot.setup_hook = setup_hook
 
