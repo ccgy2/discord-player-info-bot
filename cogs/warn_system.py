@@ -13,13 +13,12 @@ if not firebase_admin._apps:
 
 db = firestore.client()
 
-# 사용 권한 설정
 ALLOWED_ROLE_IDS = [
-    1468993487654355046  # 경고 관리 역할
+    1468993487654355046
 ]
 
 ALLOWED_USER_IDS = [
-    742989026625060914  # 관리자 ID
+    742989026625060914
 ]
 
 
@@ -35,6 +34,22 @@ def has_permission(member: discord.Member):
     return False
 
 
+class WarnRemoveView(View):
+
+    def __init__(self, warn_id):
+        super().__init__(timeout=None)
+        self.warn_id = warn_id
+
+    @discord.ui.button(label="경고 차감", style=discord.ButtonStyle.red)
+    async def remove_warn(self, interaction: discord.Interaction, button: Button):
+
+        db.collection("warnings").document(self.warn_id).delete()
+
+        await interaction.response.send_message(
+            "✅ 경고가 차감되었습니다.", ephemeral=True
+        )
+
+
 class WarnSystem(commands.Cog):
 
     def __init__(self, bot):
@@ -42,15 +57,11 @@ class WarnSystem(commands.Cog):
         self.warn_channel = None
         self.log_channel = None
 
-    @commands.command(name="경고")
+    @commands.group(name="경고", invoke_without_command=True)
     async def warn(self, ctx, member: discord.Member = None, *, reason=None):
 
-        if member is None:
-            await ctx.send("❌ 유저를 멘션해주세요.")
-            return
-
-        if reason is None:
-            await ctx.send("❌ 경고 사유를 입력해주세요.")
+        if member is None or reason is None:
+            await ctx.send("사용법: `!경고 @유저 사유`")
             return
 
         if not has_permission(ctx.author):
@@ -71,8 +82,8 @@ class WarnSystem(commands.Cog):
 
         db.collection("warnings").document(warn_id).set(data)
 
-        user_warns = db.collection("warnings").where("user_id", "==", member.id).stream()
-        count = len(list(user_warns))
+        warns = db.collection("warnings").where("user_id", "==", member.id).stream()
+        count = len(list(warns))
 
         embed = discord.Embed(
             title="⚠️ 경고 지급",
@@ -91,14 +102,7 @@ class WarnSystem(commands.Cog):
             if ch:
                 await ch.send(embed=embed)
 
-        if self.log_channel:
-            ch = ctx.guild.get_channel(self.log_channel)
-            if ch:
-                await ch.send(
-                    f"[WARN LOG]\n관리자:{ctx.author}\n대상:{member}\n사유:{reason}\nID:{warn_id}"
-                )
-
-    @commands.command(name="경고확인")
+    @warn.command(name="확인")
     async def warn_check(self, ctx, member: discord.Member = None):
 
         if member is None:
@@ -109,7 +113,6 @@ class WarnSystem(commands.Cog):
                 return
 
         warns = db.collection("warnings").where("user_id", "==", member.id).stream()
-
         warns = list(warns)
 
         if len(warns) == 0:
@@ -122,6 +125,7 @@ class WarnSystem(commands.Cog):
         )
 
         for w in warns:
+
             d = w.to_dict()
 
             embed.add_field(
@@ -134,7 +138,38 @@ class WarnSystem(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    @commands.command(name="경고초기화")
+    @warn.command(name="차감")
+    async def warn_remove(self, ctx, member: discord.Member):
+
+        if not has_permission(ctx.author):
+            await ctx.send("❌ 권한 없음")
+            return
+
+        warns = db.collection("warnings").where("user_id", "==", member.id).stream()
+        warns = list(warns)
+
+        if len(warns) == 0:
+            await ctx.send("경고 없음")
+            return
+
+        for w in warns:
+
+            data = w.to_dict()
+
+            embed = discord.Embed(
+                title="경고 삭제",
+                color=0xff9900
+            )
+
+            embed.add_field(name="대상", value=member.mention)
+            embed.add_field(name="사유", value=data["reason"])
+            embed.add_field(name="관리자", value=data["admin_name"])
+
+            view = WarnRemoveView(w.id)
+
+            await ctx.send(embed=embed, view=view)
+
+    @warn.command(name="초기화")
     async def warn_reset(self, ctx, member: discord.Member):
 
         if not has_permission(ctx.author):
@@ -146,33 +181,29 @@ class WarnSystem(commands.Cog):
         for w in warns:
             w.reference.delete()
 
-        embed = discord.Embed(
-            title="⚠️ 경고 초기화",
-            description=f"{member.mention} 의 경고가 모두 삭제되었습니다.",
-            color=0x00ff00
-        )
+        await ctx.send(f"✅ {member.mention} 경고 초기화 완료")
 
-        await ctx.send(embed=embed)
-
-    @commands.command(name="경고채널")
-    async def set_warn_channel(self, ctx, channel: discord.TextChannel):
+    @warn.command(name="채널")
+    async def warn_channel(self, ctx, channel: discord.TextChannel):
 
         if not has_permission(ctx.author):
             await ctx.send("❌ 권한 없음")
             return
 
         self.warn_channel = channel.id
-        await ctx.send(f"경고 채널 설정됨: {channel.mention}")
 
-    @commands.command(name="경고로그")
-    async def set_log_channel(self, ctx, channel: discord.TextChannel):
+        await ctx.send(f"경고 채널 설정: {channel.mention}")
+
+    @warn.command(name="로그")
+    async def warn_log(self, ctx, channel: discord.TextChannel):
 
         if not has_permission(ctx.author):
             await ctx.send("❌ 권한 없음")
             return
 
         self.log_channel = channel.id
-        await ctx.send(f"로그 채널 설정됨: {channel.mention}")
+
+        await ctx.send(f"로그 채널 설정: {channel.mention}")
 
 
 async def setup(bot):
