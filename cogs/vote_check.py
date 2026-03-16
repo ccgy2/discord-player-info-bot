@@ -95,7 +95,25 @@ class VoteCheck(commands.Cog):
 
         messages = await self.fetch_messages(channel, message_ids)
 
-        voters = await self.get_voters(messages)
+        reaction_map = {}
+        voters = set()
+
+        for msg in messages:
+
+            for reaction in msg.reactions:
+
+                emoji = str(reaction.emoji)
+
+                if emoji not in reaction_map:
+                    reaction_map[emoji] = []
+
+                async for user in reaction.users():
+
+                    if user.bot:
+                        continue
+
+                    reaction_map[emoji].append(user)
+                    voters.add(user.id)
 
         members = []
 
@@ -124,42 +142,34 @@ class VoteCheck(commands.Cog):
             if m.id not in voters:
                 not_voted.append(m)
 
-        voted = total - len(not_voted)
+        voted_count = total - len(not_voted)
 
         rate = 0
 
         if total > 0:
-            rate = (voted / total) * 100
+            rate = (voted_count / total) * 100
 
-        # Firebase 기록 저장
-        log_ref = db.collection("vote_logs").document()
-
-        log_ref.set({
+        # Firebase 기록
+        db.collection("vote_logs").add({
             "guild": guild.id,
             "channel": channel.id,
             "messages": message_ids,
-            "checked_role": role.id,
-            "excluded_roles": [r.id for r in excluded_roles],
             "participation_rate": rate
         })
 
-        # 미참여 횟수 누적
+        # 미참여 누적
         for m in not_voted:
 
-            user_ref = db.collection("vote_users").document(str(m.id))
-
-            doc = user_ref.get()
+            ref = db.collection("vote_users").document(str(m.id))
+            doc = ref.get()
 
             if doc.exists:
-
-                count = doc.to_dict().get("miss_count", 0) + 1
-
+                miss = doc.to_dict().get("miss_count", 0) + 1
             else:
+                miss = 1
 
-                count = 1
-
-            user_ref.set({
-                "miss_count": count,
+            ref.set({
+                "miss_count": miss,
                 "name": str(m)
             })
 
@@ -170,26 +180,35 @@ class VoteCheck(commands.Cog):
 
                 try:
                     await m.send(
-                        f"📢 {guild.name} 서버 투표에 참여하지 않았습니다.\n"
-                        f"투표 채널: {channel.mention}"
+                        f"📢 {guild.name} 투표에 참여하지 않았습니다.\n"
+                        f"채널: {channel.mention}"
                     )
                 except:
                     pass
 
-        msg = f"📊 **투표 결과**\n\n"
-        msg += f"참여율: **{rate:.2f}%**\n"
-        msg += f"참여: {voted}/{total}\n\n"
+        msg = "📊 **투표 결과**\n\n"
 
+        # 항목별 출력
+        for emoji, users in reaction_map.items():
+
+            msg += f"{emoji} ({len(users)}명)\n"
+
+            for u in users:
+                msg += f"{u.mention}\n"
+
+            msg += "\n"
+
+        # 미참여
         if not_voted:
 
-            msg += "❌ **투표 안한 사람**\n"
+            msg += f"❌ **미참여 ({len(not_voted)}명)**\n"
 
             for m in not_voted:
                 msg += f"{m.mention}\n"
 
-        else:
+            msg += "\n"
 
-            msg += "✅ 모든 사람이 투표했습니다."
+        msg += f"참여율: **{rate:.2f}%**"
 
         return msg
 
