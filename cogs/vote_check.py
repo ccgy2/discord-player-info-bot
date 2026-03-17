@@ -425,8 +425,5 @@ async def 미참여자(ctx, message_id: int):
 
     await ctx.send(f"❌ 미참여자 ({len(non_voters)}명)\n" + ", ".join(non_voters))
 
-
-# =========================
-# 실행
-# =========================
-bot.run(os.getenv("DISCORD_TOKEN"))
+async def setup(bot):
+    await bot.add_cog(VoteCog(bot))
