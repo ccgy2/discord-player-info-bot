@@ -1,9 +1,7 @@
 import discord
 from discord.ext import commands
 import firebase_admin
-from firebase_admin import credentials
-from firebase_admin import firestore
-
+from firebase_admin import credentials, firestore
 
 # Firebase 초기화
 if not firebase_admin._apps:
@@ -13,107 +11,104 @@ if not firebase_admin._apps:
 db = firestore.client()
 
 
+EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
+
+
+class VoteButton(discord.ui.Button):
+    def __init__(self, label, emoji, index, vote_id):
+        super().__init__(label=label, emoji=emoji, style=discord.ButtonStyle.primary)
+        self.index = index
+        self.vote_id = vote_id
+
+    async def callback(self, interaction: discord.Interaction):
+
+        user_id = str(interaction.user.id)
+
+        vote_ref = db.collection("votes").document(self.vote_id)
+        vote_data = vote_ref.get().to_dict()
+
+        votes = vote_data.get("votes", {})
+
+        # 기존 투표 제거 (중복 방지)
+        for key in votes:
+            if user_id in votes[key]:
+                votes[key].remove(user_id)
+
+        # 새 투표 추가
+        if str(self.index) not in votes:
+            votes[str(self.index)] = []
+
+        votes[str(self.index)].append(user_id)
+
+        vote_ref.update({"votes": votes})
+
+        await interaction.response.send_message("투표 완료!", ephemeral=True)
+
+
 class VoteView(discord.ui.View):
-
-    def __init__(self, cog, ctx, role, channel, message_ids, excluded_roles):
+    def __init__(self, options, vote_id):
         super().__init__(timeout=None)
-        self.cog = cog
-        self.ctx = ctx
-        self.role = role
-        self.channel = channel
-        self.message_ids = message_ids
-        self.excluded_roles = excluded_roles
 
-    @discord.ui.button(label="🔄 재검사", style=discord.ButtonStyle.primary)
-    async def recheck(self, interaction: discord.Interaction, button: discord.ui.Button):
-
-        await interaction.response.defer()
-
-        result = await self.cog.run_vote_check(
-            interaction.guild,
-            self.role,
-            self.channel,
-            self.message_ids,
-            self.excluded_roles
-        )
-
-        await interaction.followup.send(result)
-
-    @discord.ui.button(label="📩 미참여자 DM", style=discord.ButtonStyle.success)
-    async def send_dm(self, interaction: discord.Interaction, button: discord.ui.Button):
-
-        await interaction.response.defer()
-
-        result = await self.cog.run_vote_check(
-            interaction.guild,
-            self.role,
-            self.channel,
-            self.message_ids,
-            self.excluded_roles,
-            force_dm=True
-        )
-
-        await interaction.followup.send("DM 전송 완료")
+        for i, option in enumerate(options):
+            self.add_item(VoteButton(option, EMOJIS[i], i, vote_id))
 
 
-class VoteCheck(commands.Cog):
+class VoteSystem(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
         self.dm_enabled = True
 
-    async def fetch_messages(self, channel, message_ids):
+    @commands.command(name="투표생성")
+    @commands.has_permissions(administrator=True)
+    async def create_vote(self, ctx, title, *options):
 
-        messages = []
+        if len(options) < 2:
+            await ctx.send("항목은 최소 2개 필요")
+            return
 
-        for mid in message_ids:
+        vote_ref = db.collection("votes").document()
+        vote_id = vote_ref.id
 
-            try:
-                msg = await channel.fetch_message(mid)
-                messages.append(msg)
-            except:
-                pass
+        vote_ref.set({
+            "title": title,
+            "options": options,
+            "votes": {},
+            "message_id": None,
+            "channel_id": ctx.channel.id,
+            "guild_id": ctx.guild.id
+        })
 
-        return messages
+        embed = discord.Embed(title=f"📊 {title}", color=0x00ff00)
 
-    async def get_voters(self, messages):
+        for i, opt in enumerate(options):
+            embed.add_field(name=f"{EMOJIS[i]} {opt}", value="0명", inline=False)
 
-        voters = set()
+        view = VoteView(options, vote_id)
 
-        for msg in messages:
+        msg = await ctx.send(embed=embed, view=view)
 
-            for reaction in msg.reactions:
+        vote_ref.update({"message_id": msg.id})
 
-                async for user in reaction.users():
+    @commands.command(name="투표분석")
+    @commands.has_permissions(administrator=True)
+    async def analyze_vote(self, ctx, message_id: int, role: discord.Role, excluded_role: discord.Role = None):
 
-                    if not user.bot:
-                        voters.add(user.id)
+        votes_ref = db.collection("votes").where("message_id", "==", message_id).stream()
 
-        return voters
+        vote_data = None
 
-    async def run_vote_check(self, guild, role, channel, message_ids, excluded_roles, force_dm=False):
+        for doc in votes_ref:
+            vote_data = doc.to_dict()
 
-        messages = await self.fetch_messages(channel, message_ids)
+        if not vote_data:
+            await ctx.send("투표 찾을 수 없음")
+            return
 
-        reaction_map = {}
-        voters = set()
+        votes = vote_data.get("votes", {})
+        options = vote_data.get("options", [])
 
-        for msg in messages:
-
-            for reaction in msg.reactions:
-
-                emoji = str(reaction.emoji)
-
-                if emoji not in reaction_map:
-                    reaction_map[emoji] = []
-
-                async for user in reaction.users():
-
-                    if user.bot:
-                        continue
-
-                    reaction_map[emoji].append(user)
-                    voters.add(user.id)
+        guild = ctx.guild
 
         members = []
 
@@ -122,40 +117,50 @@ class VoteCheck(commands.Cog):
             if m.bot:
                 continue
 
-            skip = False
-
-            for r in excluded_roles:
-                if r in m.roles:
-                    skip = True
-
-            if skip:
+            if excluded_role and excluded_role in m.roles:
                 continue
 
             members.append(m)
 
-        total = len(members)
+        voters = set()
+
+        result = "📊 **투표 결과**\n\n"
+
+        for idx, opt in enumerate(options):
+
+            user_ids = votes.get(str(idx), [])
+
+            result += f"{EMOJIS[idx]} {opt} ({len(user_ids)}명)\n"
+
+            for uid in user_ids:
+                member = guild.get_member(int(uid))
+                if member:
+                    result += f"{member.mention}\n"
+                    voters.add(int(uid))
+
+            result += "\n"
 
         not_voted = []
 
         for m in members:
-
             if m.id not in voters:
                 not_voted.append(m)
 
+        total = len(members)
         voted_count = total - len(not_voted)
 
         rate = 0
-
         if total > 0:
             rate = (voted_count / total) * 100
 
-        # Firebase 기록
-        db.collection("vote_logs").add({
-            "guild": guild.id,
-            "channel": channel.id,
-            "messages": message_ids,
-            "participation_rate": rate
-        })
+        if not_voted:
+            result += f"❌ 미참여 ({len(not_voted)}명)\n"
+            for m in not_voted:
+                result += f"{m.mention}\n"
+
+        result += f"\n참여율: {rate:.2f}%"
+
+        await ctx.send(result)
 
         # 미참여 누적
         for m in not_voted:
@@ -164,114 +169,33 @@ class VoteCheck(commands.Cog):
             doc = ref.get()
 
             if doc.exists:
-                miss = doc.to_dict().get("miss_count", 0) + 1
+                count = doc.to_dict().get("miss_count", 0) + 1
             else:
-                miss = 1
+                count = 1
 
             ref.set({
-                "miss_count": miss,
+                "miss_count": count,
                 "name": str(m)
             })
 
         # DM
-        if self.dm_enabled or force_dm:
-
+        if self.dm_enabled:
             for m in not_voted:
-
                 try:
-                    await m.send(
-                        f"📢 {guild.name} 투표에 참여하지 않았습니다.\n"
-                        f"채널: {channel.mention}"
-                    )
+                    await m.send(f"{guild.name} 투표 미참여")
                 except:
                     pass
 
-        msg = "📊 **투표 결과**\n\n"
-
-        # 항목별 출력
-        for emoji, users in reaction_map.items():
-
-            msg += f"{emoji} ({len(users)}명)\n"
-
-            for u in users:
-                msg += f"{u.mention}\n"
-
-            msg += "\n"
-
-        # 미참여
-        if not_voted:
-
-            msg += f"❌ **미참여 ({len(not_voted)}명)**\n"
-
-            for m in not_voted:
-                msg += f"{m.mention}\n"
-
-            msg += "\n"
-
-        msg += f"참여율: **{rate:.2f}%**"
-
-        return msg
-
-    @commands.command(name="투표확인")
-    @commands.has_permissions(administrator=True)
-    async def vote_check(self, ctx, role: discord.Role, channel_id: int, *message_ids: int):
-
-        guild = ctx.guild
-        channel = guild.get_channel(channel_id)
-
-        if not channel:
-
-            await ctx.send("채널을 찾을 수 없습니다")
-            return
-
-        if len(message_ids) == 0:
-
-            await ctx.send("메시지 ID 필요")
-            return
-
-        result = await self.run_vote_check(
-            guild,
-            role,
-            channel,
-            message_ids,
-            []
-        )
-
-        view = VoteView(self, ctx, role, channel, message_ids, [])
-
-        await ctx.send(result, view=view)
-
     @commands.command(name="투표DM켜기")
     async def dm_on(self, ctx):
-
         self.dm_enabled = True
-        await ctx.send("투표 DM 켜짐")
+        await ctx.send("DM ON")
 
     @commands.command(name="투표DM끄기")
     async def dm_off(self, ctx):
-
         self.dm_enabled = False
-        await ctx.send("투표 DM 꺼짐")
-
-    @commands.command(name="미참여순위")
-    async def miss_rank(self, ctx):
-
-        docs = db.collection("vote_users").order_by("miss_count", direction=firestore.Query.DESCENDING).limit(10).stream()
-
-        msg = "📉 **투표 미참여 순위**\n\n"
-
-        rank = 1
-
-        for doc in docs:
-
-            data = doc.to_dict()
-
-            msg += f"{rank}. {data['name']} - {data['miss_count']}회\n"
-
-            rank += 1
-
-        await ctx.send(msg)
+        await ctx.send("DM OFF")
 
 
 async def setup(bot):
-    await bot.add_cog(VoteCheck(bot))
+    await bot.add_cog(VoteSystem(bot))
