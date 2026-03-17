@@ -1476,8 +1476,6 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
     await load_cogs()
 
-bot.run(os.getenv("DISCORD_TOKEN"))
-
 # ---------- 에러 처리 ----------
 @bot.event
 async def on_command_error(ctx, error):
