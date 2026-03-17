@@ -429,4 +429,4 @@ async def 미참여자(ctx, message_id: int):
 # =========================
 # 실행
 # =========================
-bot.run(os.getenv("TOKEN"))
+bot.run(os.getenv("DISCORD_TOKEN"))
