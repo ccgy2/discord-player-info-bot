@@ -1,149 +1,432 @@
 import discord
 from discord.ext import commands
 from discord.ui import View, Button
-import firebase_admin
-from firebase_admin import credentials, db
-import os
 import json
+import os
+
+intents = discord.Intents.default()
+intents.members = True
+intents.message_content = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 # =========================
-# 🔥 Firebase 초기화 (Railway용)
+# 투표 데이터 저장
 # =========================
-if not firebase_admin._apps:
-    firebase_json = json.loads(os.environ["FIREBASE_KEY"])
-    cred = credentials.Certificate(firebase_json)
-
-    firebase_admin.initialize_app(cred, {
-        'databaseURL': os.environ["FIREBASE_DB_URL"]
-    })
-
-
-# =========================
-# 🔹 Embed 생성
-# =========================
-def create_poll_embed(guild, data):
-    embed = discord.Embed(title=f"📊 {data['title']}", color=0x2ecc71)
-
-    for opt in data["options"]:
-        users = data["votes"].get(opt, [])
-        names = []
-
-        for uid in users:
-            member = guild.get_member(int(uid))
-            if member:
-                names.append(member.display_name)
-
-        value = f"👥 {len(users)}명\n"
-        value += "\n".join(names) if names else "없음"
-
-        embed.add_field(name=opt, value=value, inline=False)
-
-    return embed
+votes = {}  # message_id 기준 저장
 
 
 # =========================
-# 🔹 투표 버튼
+# 투표 View
+# =========================
+class VoteView(View):
+    def __init__(self, title, options, author, guild):
+        super().__init__(timeout=None)
+        self.title = title
+        self.options = options
+        self.author = author
+        self.guild = guild
+
+        for i, option in enumerate(options):
+            self.add_item(VoteButton(i, option))
+
+        self.add_item(CheckButton())
+        self.add_item(NonVoterButton())
+        self.add_item(CloseButton())
+
+
+# =========================
+# 투표 버튼
 # =========================
 class VoteButton(Button):
-    def __init__(self, option):
-        super().__init__(label=option, style=discord.ButtonStyle.primary)
-        self.option = option
+    def __init__(self, index, label):
+        super().__init__(label=f"{label} (0명)", style=discord.ButtonStyle.primary)
+        self.index = index
+        self.option_label = label
 
     async def callback(self, interaction: discord.Interaction):
-        user_id = str(interaction.user.id)
-        poll_id = str(interaction.message.id)
+        msg_id = interaction.message.id
+        user_id = interaction.user.id
 
-        ref = db.reference(f"polls/{poll_id}")
-        data = ref.get()
-
-        votes = data.get("votes", {})
+        if msg_id not in votes:
+            votes[msg_id] = {
+                "options": {},
+                "voters": {}
+            }
 
         # 기존 투표 제거
-        for opt in votes:
-            if user_id in votes[opt]:
-                votes[opt].remove(user_id)
+        for opt in votes[msg_id]["options"]:
+            if user_id in votes[msg_id]["options"][opt]:
+                votes[msg_id]["options"][opt].remove(user_id)
 
         # 새 투표
-        votes.setdefault(self.option, []).append(user_id)
+        votes[msg_id]["options"].setdefault(self.option_label, []).append(user_id)
+        votes[msg_id]["voters"][user_id] = self.option_label
 
-        ref.update({"votes": votes})
-
-        # 🔥 실시간 업데이트
-        new_data = ref.get()
-        embed = create_poll_embed(interaction.guild, new_data)
-        await interaction.message.edit(embed=embed)
-
-        await interaction.response.send_message("투표 완료", ephemeral=True)
+        await update_message(interaction.message)
+        await interaction.response.send_message("투표 완료!", ephemeral=True)
 
 
 # =========================
-# 🔹 미참여 버튼
+# 투표 현황 확인 버튼
 # =========================
-class NotVotedButton(Button):
+class CheckButton(Button):
     def __init__(self):
-        super().__init__(label="❌ 미참여자", style=discord.ButtonStyle.danger)
+        super().__init__(label="투표 확인", style=discord.ButtonStyle.secondary)
 
     async def callback(self, interaction: discord.Interaction):
-        poll_id = str(interaction.message.id)
-        ref = db.reference(f"polls/{poll_id}")
-        data = ref.get()
+        msg_id = interaction.message.id
 
-        voters = set()
-        for opt in data["votes"]:
-            for uid in data["votes"][opt]:
-                voters.add(uid)
+        if msg_id not in votes:
+            return await interaction.response.send_message("데이터 없음", ephemeral=True)
 
-        members = [m for m in interaction.guild.members if not m.bot]
-        not_voted = [m for m in members if str(m.id) not in voters]
+        text = "📊 투표 현황\n\n"
 
-        text = "\n".join([m.mention for m in not_voted]) or "없음"
+        for opt, users in votes[msg_id]["options"].items():
+            mentions = []
+            for uid in users:
+                member = interaction.guild.get_member(uid)
+                if member:
+                    mentions.append(member.mention)
+
+            text += f"**{opt} ({len(users)}명)**\n"
+            text += ", ".join(mentions) if mentions else "없음"
+            text += "\n\n"
+
         await interaction.response.send_message(text, ephemeral=True)
 
 
 # =========================
-# 🔹 View
+# 미참여자 버튼
+# =========================
+class NonVoterButton(Button):
+    def __init__(self):
+        super().__init__(label="미참여자", style=discord.ButtonStyle.danger)
+
+    async def callback(self, interaction: discord.Interaction):
+        msg_id = interaction.message.id
+
+        if msg_id not in votes:
+            return await interaction.response.send_message("데이터 없음", ephemeral=True)
+
+        all_members = [
+            m for m in interaction.guild.members
+            if not m.bot
+        ]
+
+        voted = set(votes[msg_id]["voters"].keys())
+
+        non_voters = [m.mention for m in all_members if m.id not in voted]
+
+        await interaction.response.send_message(
+            f"❌ 미참여자 ({len(non_voters)}명)\n" + ", ".join(non_voters),
+            ephemeral=True
+        )
+
+
+# =========================
+# 투표 마감
+# =========================
+class CloseButton(Button):
+    def __init__(self):
+        super().__init__(label="투표 마감", style=discord.ButtonStyle.success)
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != interaction.message.author.id:
+            return await interaction.response.send_message("작성자만 가능", ephemeral=True)
+
+        for item in self.view.children:
+            item.disabled = True
+
+        await interaction.message.edit(view=self.view)
+        await interaction.response.send_message("투표 마감됨", ephemeral=True)
+
+
+# =========================
+# 메시지 업데이트 (핵심)
+# =========================
+async def update_message(message):
+    msg_id = message.id
+
+    if msg_id not in votes:
+        return
+
+    view = message.components
+
+    new_view = View(timeout=None)
+
+    for item in message.components[0].children:
+        if isinstance(item, discord.ui.Button):
+            label = item.label.split(" (")[0]
+
+            count = len(votes[msg_id]["options"].get(label, []))
+
+            if item.label.startswith("투표 확인"):
+                new_view.add_item(CheckButton())
+            elif item.label.startswith("미참여자"):
+                new_view.add_item(NonVoterButton())
+            elif item.label.startswith("투표 마감"):
+                new_view.add_item(CloseButton())
+            else:
+                btn = VoteButton(0, label)
+                btn.label = f"{label} ({count}명)"
+                new_view.add_item(btn)
+
+    await message.edit(view=new_view)
+
+
+# =========================
+# 투표 생성 명령어
+# =========================
+@bot.command()
+async def 투표생성(ctx, 제목, *항목):
+    if len(항목) < 2:
+        return await ctx.send("항목 2개 이상 필요")
+
+    view = VoteView(제목, 항목, ctx.author, ctx.guild)
+
+    msg = await ctx.send(f"📊 **{제목}**", view=view)
+
+    votes[msg.id] = {
+        "options": {opt: [] for opt in 항목},
+        "voters": {}
+    }
+
+
+# =========================
+# 미참여자 명령어 (기존 기능 유지)
+# =========================
+@bot.command()
+async def 미참여자(ctx, message_id: int):
+    if message_id not in votes:
+        return await ctx.send("해당 투표 없음")
+
+    voted = set(votes[message_id]["voters"].keys())
+
+    non_voters = [
+        m.mention for m in ctx.guild.members
+        if not m.bot and m.id not in voted
+    ]
+
+    await ctx.send(f"❌ 미참여자 ({len(non_voters)}명)\n" + ", ".join(non_voters))
+
+
+# =========================
+# 실행
+# =========================
+import discord
+from discord.ext import commands
+from discord.ui import View, Button
+import json
+
+intents = discord.Intents.default()
+intents.members = True
+intents.message_content = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+# =========================
+# 투표 데이터 저장
+# =========================
+votes = {}  # message_id 기준 저장
+
+
+# =========================
+# 투표 View
 # =========================
 class VoteView(View):
-    def __init__(self, bot, poll_id):
+    def __init__(self, title, options, author, guild):
         super().__init__(timeout=None)
-        self.bot = bot
-        self.poll_id = poll_id
+        self.title = title
+        self.options = options
+        self.author = author
+        self.guild = guild
 
-        ref = db.reference(f"polls/{poll_id}")
-        data = ref.get()
+        for i, option in enumerate(options):
+            self.add_item(VoteButton(i, option))
 
-        for opt in data["options"]:
-            self.add_item(VoteButton(opt))
-
-        self.add_item(NotVotedButton())
+        self.add_item(CheckButton())
+        self.add_item(NonVoterButton())
+        self.add_item(CloseButton())
 
 
 # =========================
-# 🔹 Cog
+# 투표 버튼
 # =========================
-class VoteSystem(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
+class VoteButton(Button):
+    def __init__(self, index, label):
+        super().__init__(label=f"{label} (0명)", style=discord.ButtonStyle.primary)
+        self.index = index
+        self.option_label = label
 
-    @commands.command()
-    async def 투표생성(self, ctx, title, *options):
-        if len(options) < 2:
-            return await ctx.send("❌ 선택지 2개 이상 필요")
+    async def callback(self, interaction: discord.Interaction):
+        msg_id = interaction.message.id
+        user_id = interaction.user.id
 
-        msg = await ctx.send("📊 생성중...")
+        if msg_id not in votes:
+            votes[msg_id] = {
+                "options": {},
+                "voters": {}
+            }
 
-        ref = db.reference(f"polls/{msg.id}")
-        ref.set({
-            "title": title,
-            "options": list(options),
-            "votes": {}
-        })
+        # 기존 투표 제거
+        for opt in votes[msg_id]["options"]:
+            if user_id in votes[msg_id]["options"][opt]:
+                votes[msg_id]["options"][opt].remove(user_id)
 
-        data = ref.get()
-        embed = create_poll_embed(ctx.guild, data)
+        # 새 투표
+        votes[msg_id]["options"].setdefault(self.option_label, []).append(user_id)
+        votes[msg_id]["voters"][user_id] = self.option_label
 
-        await msg.edit(embed=embed, view=VoteView(self.bot, msg.id))
+        await update_message(interaction.message)
+        await interaction.response.send_message("투표 완료!", ephemeral=True)
 
 
-async def setup(bot):
-    await bot.add_cog(VoteSystem(bot))
+# =========================
+# 투표 현황 확인 버튼
+# =========================
+class CheckButton(Button):
+    def __init__(self):
+        super().__init__(label="투표 확인", style=discord.ButtonStyle.secondary)
+
+    async def callback(self, interaction: discord.Interaction):
+        msg_id = interaction.message.id
+
+        if msg_id not in votes:
+            return await interaction.response.send_message("데이터 없음", ephemeral=True)
+
+        text = "📊 투표 현황\n\n"
+
+        for opt, users in votes[msg_id]["options"].items():
+            mentions = []
+            for uid in users:
+                member = interaction.guild.get_member(uid)
+                if member:
+                    mentions.append(member.mention)
+
+            text += f"**{opt} ({len(users)}명)**\n"
+            text += ", ".join(mentions) if mentions else "없음"
+            text += "\n\n"
+
+        await interaction.response.send_message(text, ephemeral=True)
+
+
+# =========================
+# 미참여자 버튼
+# =========================
+class NonVoterButton(Button):
+    def __init__(self):
+        super().__init__(label="미참여자", style=discord.ButtonStyle.danger)
+
+    async def callback(self, interaction: discord.Interaction):
+        msg_id = interaction.message.id
+
+        if msg_id not in votes:
+            return await interaction.response.send_message("데이터 없음", ephemeral=True)
+
+        all_members = [
+            m for m in interaction.guild.members
+            if not m.bot
+        ]
+
+        voted = set(votes[msg_id]["voters"].keys())
+
+        non_voters = [m.mention for m in all_members if m.id not in voted]
+
+        await interaction.response.send_message(
+            f"❌ 미참여자 ({len(non_voters)}명)\n" + ", ".join(non_voters),
+            ephemeral=True
+        )
+
+
+# =========================
+# 투표 마감
+# =========================
+class CloseButton(Button):
+    def __init__(self):
+        super().__init__(label="투표 마감", style=discord.ButtonStyle.success)
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != interaction.message.author.id:
+            return await interaction.response.send_message("작성자만 가능", ephemeral=True)
+
+        for item in self.view.children:
+            item.disabled = True
+
+        await interaction.message.edit(view=self.view)
+        await interaction.response.send_message("투표 마감됨", ephemeral=True)
+
+
+# =========================
+# 메시지 업데이트 (핵심)
+# =========================
+async def update_message(message):
+    msg_id = message.id
+
+    if msg_id not in votes:
+        return
+
+    view = message.components
+
+    new_view = View(timeout=None)
+
+    for item in message.components[0].children:
+        if isinstance(item, discord.ui.Button):
+            label = item.label.split(" (")[0]
+
+            count = len(votes[msg_id]["options"].get(label, []))
+
+            if item.label.startswith("투표 확인"):
+                new_view.add_item(CheckButton())
+            elif item.label.startswith("미참여자"):
+                new_view.add_item(NonVoterButton())
+            elif item.label.startswith("투표 마감"):
+                new_view.add_item(CloseButton())
+            else:
+                btn = VoteButton(0, label)
+                btn.label = f"{label} ({count}명)"
+                new_view.add_item(btn)
+
+    await message.edit(view=new_view)
+
+
+# =========================
+# 투표 생성 명령어
+# =========================
+@bot.command()
+async def 투표생성(ctx, 제목, *항목):
+    if len(항목) < 2:
+        return await ctx.send("항목 2개 이상 필요")
+
+    view = VoteView(제목, 항목, ctx.author, ctx.guild)
+
+    msg = await ctx.send(f"📊 **{제목}**", view=view)
+
+    votes[msg.id] = {
+        "options": {opt: [] for opt in 항목},
+        "voters": {}
+    }
+
+
+# =========================
+# 미참여자 명령어 (기존 기능 유지)
+# =========================
+@bot.command()
+async def 미참여자(ctx, message_id: int):
+    if message_id not in votes:
+        return await ctx.send("해당 투표 없음")
+
+    voted = set(votes[message_id]["voters"].keys())
+
+    non_voters = [
+        m.mention for m in ctx.guild.members
+        if not m.bot and m.id not in voted
+    ]
+
+    await ctx.send(f"❌ 미참여자 ({len(non_voters)}명)\n" + ", ".join(non_voters))
+
+
+# =========================
+# 실행
+# =========================
+bot.run(os.getenv("TOKEN"))
