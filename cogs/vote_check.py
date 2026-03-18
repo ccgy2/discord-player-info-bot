@@ -4,6 +4,10 @@ from discord.ui import View, Button
 
 votes = {}
 
+
+# =========================
+# 투표 View
+# =========================
 class VoteView(View):
     def __init__(self, title, options, author, guild):
         super().__init__(timeout=None)
@@ -20,6 +24,9 @@ class VoteView(View):
         self.add_item(CloseButton())
 
 
+# =========================
+# 투표 버튼
+# =========================
 class VoteButton(Button):
     def __init__(self, index, label):
         super().__init__(label=f"{label} (0명)", style=discord.ButtonStyle.primary)
@@ -33,10 +40,12 @@ class VoteButton(Button):
         if msg_id not in votes:
             votes[msg_id] = {"options": {}, "voters": {}}
 
+        # 기존 투표 제거 (중복 방지)
         for opt in votes[msg_id]["options"]:
             if user_id in votes[msg_id]["options"][opt]:
                 votes[msg_id]["options"][opt].remove(user_id)
 
+        # 새 투표
         votes[msg_id]["options"].setdefault(self.option_label, []).append(user_id)
         votes[msg_id]["voters"][user_id] = self.option_label
 
@@ -44,6 +53,9 @@ class VoteButton(Button):
         await interaction.response.send_message("투표 완료!", ephemeral=True)
 
 
+# =========================
+# 투표 현황 버튼
+# =========================
 class CheckButton(Button):
     def __init__(self):
         super().__init__(label="투표 확인", style=discord.ButtonStyle.secondary)
@@ -57,11 +69,20 @@ class CheckButton(Button):
         text = "📊 투표 현황\n\n"
 
         for opt, users in votes[msg_id]["options"].items():
-            mentions = [
-                interaction.guild.get_member(uid).mention
-                for uid in users
-                if interaction.guild.get_member(uid)
-            ]
+            mentions = []
+
+            for uid in users:
+                member = interaction.guild.get_member(uid)
+
+                # 없으면 강제로 가져오기
+                if not member:
+                    try:
+                        member = await interaction.guild.fetch_member(uid)
+                    except:
+                        member = None
+
+                if member:
+                    mentions.append(member.mention)
 
             text += f"**{opt} ({len(users)}명)**\n"
             text += ", ".join(mentions) if mentions else "없음"
@@ -70,6 +91,9 @@ class CheckButton(Button):
         await interaction.response.send_message(text, ephemeral=True)
 
 
+# =========================
+# 미참여자 버튼
+# =========================
 class NonVoterButton(Button):
     def __init__(self):
         super().__init__(label="미참여자", style=discord.ButtonStyle.danger)
@@ -80,7 +104,12 @@ class NonVoterButton(Button):
         if msg_id not in votes:
             return await interaction.response.send_message("데이터 없음", ephemeral=True)
 
-        all_members = [m for m in interaction.guild.members if not m.bot]
+        # ⭐ 핵심: 전체 멤버 강제 로드
+        all_members = [
+            m async for m in interaction.guild.fetch_members(limit=None)
+            if not m.bot
+        ]
+
         voted = set(votes[msg_id]["voters"].keys())
 
         non_voters = [m.mention for m in all_members if m.id not in voted]
@@ -91,6 +120,9 @@ class NonVoterButton(Button):
         )
 
 
+# =========================
+# 투표 마감
+# =========================
 class CloseButton(Button):
     def __init__(self):
         super().__init__(label="투표 마감", style=discord.ButtonStyle.success)
@@ -106,6 +138,9 @@ class CloseButton(Button):
         await interaction.response.send_message("투표 마감됨", ephemeral=True)
 
 
+# =========================
+# 메시지 업데이트
+# =========================
 async def update_message(message):
     msg_id = message.id
 
@@ -132,6 +167,9 @@ async def update_message(message):
     await message.edit(view=new_view)
 
 
+# =========================
+# Cog
+# =========================
 class VoteCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -156,13 +194,18 @@ class VoteCog(commands.Cog):
 
         voted = set(votes[message_id]["voters"].keys())
 
-        non_voters = [
-            m.mention for m in ctx.guild.members
-            if not m.bot and m.id not in voted
+        all_members = [
+            m async for m in ctx.guild.fetch_members(limit=None)
+            if not m.bot
         ]
+
+        non_voters = [m.mention for m in all_members if m.id not in voted]
 
         await ctx.send(f"❌ 미참여자 ({len(non_voters)}명)\n" + ", ".join(non_voters))
 
 
+# =========================
+# setup (필수)
+# =========================
 async def setup(bot):
     await bot.add_cog(VoteCog(bot))
