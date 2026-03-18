@@ -1496,9 +1496,14 @@ async def on_close():
     except Exception:
         pass
 
+@bot.event
+async def setup_hook():
+    await bot.load_extension("cogs.vote_check")
+
+bot.run(os.getenv("DISCORD_TOKEN"))
+
 # ---------- 실행 ----------
 if __name__ == "__main__":
-    token = os.getenv("DISCORD_TOKEN")
     if not token:
         print("❌ DISCORD_TOKEN 환경변수가 설정되어 있지 않습니다.")
         raise SystemExit(1)
