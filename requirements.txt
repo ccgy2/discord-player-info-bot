@@ -5,3 +5,4 @@ aiohttp>=3.8.0
 pypdf
 sentence-transformers
 numpy
+google-genai
