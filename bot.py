@@ -47,7 +47,7 @@ INTENTS.members = True
 VERIFY_MC = os.getenv("VERIFY_MC", "true").lower() not in ("0", "false", "no", "off")
 
 # 구종에 숫자 없을때 기본 수치
-DEFAULT_PITCH_POWER = int(os.getenv("DEFAULT_PITCH_POWER", "D"))
+raw_pitch_power = os.getenv("DEFAULT_PITCH_POWER", "D")
 try:
     DEFAULT_PITCH_POWER = int(raw_pitch_power)
 except ValueError:
