@@ -47,7 +47,11 @@ INTENTS.members = True
 VERIFY_MC = os.getenv("VERIFY_MC", "true").lower() not in ("0", "false", "no", "off")
 
 # 구종에 숫자 없을때 기본 수치
-DEFAULT_PITCH_POWER = int(os.getenv("DEFAULT_PITCH_POWER", "20"))
+DEFAULT_PITCH_POWER = int(os.getenv("DEFAULT_PITCH_POWER", "D"))
+try:
+    DEFAULT_PITCH_POWER = int(raw_pitch_power)
+except ValueError:
+    DEFAULT_PITCH_POWER = raw_pitch_power
 
 bot = commands.Bot(command_prefix=BOT_PREFIX, intents=INTENTS, help_command=None)
 
@@ -216,7 +220,7 @@ def pitch_base_name(pitch: str) -> str:
     return m.group(1).strip() if m else pitch.strip()
 
 def pitch_has_power(pitch: str) -> bool:
-    return bool(re.search(r'\(\s*\d+\s*\)$', pitch))
+    return bool(re.search(r'\(\s*\w+\s*\)$', pitch))
 
 def normalize_pitch_token(tok: str) -> str:
     """
@@ -388,7 +392,7 @@ def parse_pitch_line(pitch_line: str) -> List[str]:
     if not pitch_line:
         return []
     # 구종토큰: "포심(40)", "슬라이더(40)", "포심", "커브( 30 )" 등 잡아냄
-    tokens = re.findall(r'([^\s,]+(?:\(\s*\d+\s*\))?|[^\s,]+)', pitch_line.strip())
+    tokens = re.findall(r'([^\s,]+(?:\(\s*\w+\s*\))?|[^\s,]+)', pitch_line.strip())
     out = []
     for tok in tokens:
         tok = tok.strip().rstrip(",")
