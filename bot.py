@@ -1474,7 +1474,14 @@ async def reset_records_cmd(ctx, nick: str, typ: str):
 async def load_cogs():
     for filename in os.listdir("./cogs"):
         if filename.endswith(".py"):
-            await bot.load_extension(f"cogs.{filename[:-3]}")
+            try:
+                await bot.load_extension(f"cogs.{filename[:-3]}")
+                print(f"✅ 성공적으로 로드됨: {filename}")
+            except discord.ext.commands.errors.ExtensionAlreadyLoaded:
+                # 이미 로드된 파일은 에러를 무시하고 넘어갑니다.
+                pass
+            except Exception as e:
+                print(f"❌ {filename} 로드 실패: {e}")
 
 @bot.event
 async def on_ready():
@@ -1503,7 +1510,12 @@ async def on_close():
 
 @bot.event
 async def setup_hook():
-    await bot.load_extension("cogs.vote_check")
+    # 명시적 필수 확장 기능이 있다면 기입
+    try:
+        # await bot.load_extension("cogs.vote_check")  # 👈 앞에 #을 붙여서 지워줍니다.
+        pass
+    except Exception:
+        pass
 
 bot.run(os.getenv("DISCORD_TOKEN"))
 
