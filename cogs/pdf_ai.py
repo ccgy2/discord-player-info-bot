@@ -217,8 +217,10 @@ class PDFAI(commands.Cog):
         files = set()
 
         for doc in docs:
-            d = doc.to_dict()
-            files.add(d["source"])
+            # 문서의 내부 필드가 아니라, 
+            # 왼쪽 리스트에 있는 문서 고유의 ID(예: '규정.pdf')를 직접 가져옵니다.
+            if doc.id:
+                files.add(doc.id)
 
         if not files:
             await ctx.send("등록된 PDF가 없습니다.")
