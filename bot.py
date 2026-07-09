@@ -1469,7 +1469,7 @@ async def reset_records_cmd(ctx, nick: str, typ: str):
         await ctx.send(f"❌ 실패: {e}")
 
 # =========================
-# COG 자동 로드
+# COG 자동 로드 함수
 # =========================
 async def load_cogs():
     for filename in os.listdir("./cogs"):
@@ -1478,24 +1478,27 @@ async def load_cogs():
                 await bot.load_extension(f"cogs.{filename[:-3]}")
                 print(f"✅ 성공적으로 로드됨: {filename}")
             except discord.ext.commands.errors.ExtensionAlreadyLoaded:
-                # 이미 로드된 파일은 에러를 무시하고 넘어갑니다.
                 pass
             except Exception as e:
                 print(f"❌ {filename} 로드 실패: {e}")
 
+# ---------- 디스코드 기본 이벤트 ----------
+@bot.event
+async def setup_hook():
+    print("🔄 [setup_hook] 봇 로그인 전 AI 모델 및 확장 기능(Cogs) 로드를 시작합니다...")
+    # 여기서 비동기적으로 안정되게 cogs와 모델을 전부 다운로드/로드한 후 로그인을 진행합니다.
+    await load_cogs()
+
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user}")
-    # 💡 이 한 줄을 아래와 같이 create_task로 바꿔줍니다!
-    bot.loop.create_task(load_cogs())
+    print(f"✅ 봇 로그인 완료: {bot.user}")
 
 # ---------- 에러 처리 ----------
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send("인자가 부족합니다. `!도움` 로 사용법을 확인하세요.")
+        await ctx.send("인자가 부족합니다. `!도움` 으로 사용법을 확인하세요.")
     elif isinstance(error, commands.CommandNotFound):
-        # ignore unknown commands to avoid spam
         return
     else:
         await ctx.send(f"명령 실행 중 오류가 발생했습니다: `{error}`")
@@ -1509,30 +1512,11 @@ async def on_close():
     except Exception:
         pass
 
-@bot.event
-async def setup_hook():
-    # 명시적 필수 확장 기능이 있다면 기입
-    try:
-        # await bot.load_extension("cogs.vote_check")  # 👈 앞에 #을 붙여서 지워줍니다.
-        pass
-    except Exception:
-        pass
-
-bot.run(os.getenv("DISCORD_TOKEN"))
-
 # ---------- 실행 ----------
 if __name__ == "__main__":
+    token = os.getenv("DISCORD_TOKEN")
     if not token:
         print("❌ DISCORD_TOKEN 환경변수가 설정되어 있지 않습니다.")
-        raise SystemExit(1)
-    try:
-        bot.run(token)
-    except Exception as e:
-        print("봇 실행 중 예외:", e)
-    finally:
-        try:
-            loop = asyncio.get_event_loop()
-            if http_session and not http_session.closed:
-                loop.run_until_complete(close_http_session())
-        except Exception:
-            pass
+        raise SystemExit
+    
+    bot.run(token)
