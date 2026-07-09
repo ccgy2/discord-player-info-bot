@@ -1486,7 +1486,8 @@ async def load_cogs():
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
-    await load_cogs()
+    # 💡 이 한 줄을 아래와 같이 create_task로 바꿔줍니다!
+    bot.loop.create_task(load_cogs())
 
 # ---------- 에러 처리 ----------
 @bot.event
