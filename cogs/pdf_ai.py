@@ -209,7 +209,7 @@ class PDFAI(commands.Cog):
         await ctx.send(msg[:2000])
 
     # -----------------------------
-    # PDF 목록
+    # PDF 목록 (글자 수 초과 에러 방지 버전)
     # -----------------------------
     @commands.command(name="pdf목록")
     async def list_pdf(self, ctx):
@@ -217,8 +217,6 @@ class PDFAI(commands.Cog):
         files = set()
 
         for doc in docs:
-            # 문서의 내부 필드가 아니라, 
-            # 왼쪽 리스트에 있는 문서 고유의 ID(예: '규정.pdf')를 직접 가져옵니다.
             if doc.id:
                 files.add(doc.id)
 
@@ -230,7 +228,11 @@ class PDFAI(commands.Cog):
         for f in files:
             msg += f + "\n"
 
-        await ctx.send(msg)
+        # 💡 중요: 디스코드 2,000자 제한을 넘지 않도록 안전하게 잘라서 보냅니다.
+        if len(msg) > 2000:
+            await ctx.send(msg[:1990] + "\n...(이하 생략)")
+        else:
+            await ctx.send(msg)
 
 
 async def setup(bot):
