@@ -1,6 +1,7 @@
 import os
 import io
 import math
+import json  # ◀ [필수] 이 녀석이 꼭 들어가야 json.loads가 작동합니다!
 from datetime import datetime, timezone
 import pandas as pd
 import gspread
@@ -9,17 +10,19 @@ from discord.ext import commands
 
 # ---------- 구글 스프레드시트 연동 설정 ----------
 try:
-    # google_creds.json 파일이 봇 폴더 내에 있어야 합니다.
-    gc = gspread.service_account(filename='google_creds.json')
+    # 1. 먼저 Railway 환경 변수(Variables)에 등록된 키가 있는지 확인합니다.
+    env_creds = os.getenv("GOOGLE_CREDS_JSON")
+    
+    if env_creds:
+        # 환경 변수가 있으면 텍스트를 JSON 구조로 변환하여 바로 인증합니다.
+        creds_dict = json.loads(env_creds)
+        gc = gspread.service_account_from_dict(creds_dict)
+    else:
+        # 2. 환경 변수가 없으면(로컬 내 컴퓨터 테스트 등) 기존처럼 파일에서 읽어옵니다.
+        gc = gspread.service_account(filename='google_creds.json')
 except Exception as e:
-    print("⚠️ 구글 스프레드시트 연동 실패 (google_creds.json 확인 필요):", e)
+    print("⚠️ 구글 스프레드시트 연동 실패 (환경변수 또는 google_creds.json 확인 필요):", e)
     gc = None
-
-# 스프레드시트 ID 매핑
-SPREADSHEET_MAPPING = {
-    "연습경기": "181T8HXTv5G0WemE8Zspyzk2Ye8dvU78rIK_3wWOt2oQ",
-    "리그경기": "1bgYyE2BwiRL9k9TUJavbi1S-iCs7N3zW3rtPL5ygk6o"
-}
 
 # 야구 이닝(소수점 .1, .2) 합산 계산용 헬퍼 함수 (예: 1.2 + 0.2 = 2.1)
 def add_innings(current_inn: float, new_inn: float) -> float:
