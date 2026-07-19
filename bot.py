@@ -95,6 +95,91 @@ except Exception as e:
     print("Firebase 초기화 실패:", e)
     db = None
 
+def int_to_innings(outs: int) -> float:
+    """아웃카운트를 이닝 소수점 표기법으로 변환 (ex: 5아웃 -> 1.2)"""
+    return (outs // 3) + (outs % 3) / 10
+
+def innings_to_outs(inning_val: float) -> int:
+    """이닝 소수점 표기법을 총 아웃카운트로 변환 (ex: 1.2 -> 5아웃)"""
+    try:
+        val = float(inning_val)
+        inn = int(val)
+        frac = round((val - inn) * 10)
+        return inn * 3 + frac
+    except:
+        return 0
+
+def update_google_sheet(match_type: str, sheet_name: str, records: list, is_pitcher=False):
+    if not gc: return False
+    try:
+        spreadsheet_id = SPREADSHEET_MAPPING.get(match_type)
+        doc = gc.open_by_key(spreadsheet_id)
+        
+        try:
+            worksheet = doc.worksheet(sheet_name)
+        except:
+            worksheet = doc.get_worksheet(0)
+            
+        all_values = worksheet.get_all_values()
+        if not all_values: return False
+        
+        header = [h.strip() for h in all_values[0]]
+        if "선수명" not in header: return False
+        name_col_idx = header.index("선수명")
+        
+        for row_data in records:
+            player_name = row_data.get("선수명").strip()
+            player_row_idx = None
+            first_empty_row = None
+            
+            # 1. 기존 선수 행 찾기 또는 빈 행 탐색
+            for idx, row in enumerate(all_values):
+                if idx == 0: continue
+                current_name = row[name_col_idx].strip() if len(row) > name_col_idx else ""
+                
+                if current_name == player_name:
+                    player_row_idx = idx + 1
+                    break
+                if not current_name and first_empty_row is None:
+                    first_empty_row = idx + 1
+            
+            # 2. 업데이트 혹은 삽입 위치 확정
+            if player_row_idx:
+                current_row_values = all_values[player_row_idx - 1]
+                for key, val in row_data.items():
+                    if key == "선수명" or key not in header: continue
+                    col_idx = header.index(key)
+                    
+                    # 기존 값 가졌오기
+                    orig_str = current_row_values[col_idx] if col_idx < len(current_row_values) else "0"
+                    
+                    if is_pitcher and key == "이닝":
+                        # 야구 이닝 특수 누적법 적용 (아웃카운트 변환 후 합산)
+                        total_outs = innings_to_outs(orig_str) + innings_to_outs(val)
+                        new_val = int_to_innings(total_outs)
+                    else:
+                        # 일반 수치형 데이터 합산
+                        try:
+                            new_val = (float(orig_str) if orig_str else 0) + float(val)
+                            if new_val.is_integer(): new_val = int(new_val)
+                        except:
+                            new_val = val
+                            
+                    worksheet.update_cell(player_row_idx, col_idx + 1, new_val)
+            else:
+                # 선수가 등록 안 되어 있다면 양식의 빈 곳에 채우거나 append
+                target_row = first_empty_row if first_empty_row else len(all_values) + 1
+                worksheet.update_cell(target_row, name_col_idx + 1, player_name)
+                
+                for key, val in row_data.items():
+                    if key in header and key != "선수명":
+                        worksheet.update_cell(target_row, header.index(key) + 1, val)
+                        
+        return True
+    except Exception as e:
+        print(f"구글 시트 업데이트 에러: {e}")
+        return False
+
 # ---------- HTTP session & MC cache ----------
 http_session: Optional[aiohttp.ClientSession] = None
 mc_cache: Dict[str, bool] = {}  # nickname(lower) -> bool
