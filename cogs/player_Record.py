@@ -15,9 +15,11 @@ SPREADSHEET_MAPPING = {
 }
 
 def init_gspread():
-    """구글 서비스 계정 인증 객체 빌더 함수"""
+    """구글 서비스 계정 인증 객체 빌더 함수 (유연한 환경변수 검사 추가)"""
     try:
-        env_creds = os.getenv("GOOGLE_CREDS_JSON")
+        # 💡 [핵심 수정] S가 붙은 것과 안 붙은 것 둘 다 찾아서 작동하도록 보완
+        env_creds = os.getenv("GOOGLE_CREDS_JSON") or os.getenv("GOOGLE_CRED_JSON")
+        
         if env_creds:
             creds_dict = json.loads(env_creds)
             return gspread.service_account_from_dict(creds_dict)
@@ -231,8 +233,7 @@ class PlayerRecord(commands.Cog):
                 excel_file = pd.ExcelFile(io.BytesIO(file_bytes))
                 sheet_names = excel_file.sheet_names
                 
-                # 💡 [🔥 핵심 수정] 시트 이름 조건 필터를 완전히 제거했습니다!
-                # 파일 내부에 있는 모든 시트(홈, 원정, Sheet1 등)를 무조건 전부 긁어옵니다.
+                # 파일 내부에 있는 모든 시트를 돌며 데이터 수집
                 for sheet in sheet_names:
                     df = excel_file.parse(sheet_name=sheet, header=None)
                     self._parse_single_sheet(df, batting_records, pitching_records)
@@ -265,7 +266,6 @@ class PlayerRecord(commands.Cog):
         
         if batting_records:
             if bat_ok_players:
-                # 중복 이름을 제거하여 깔끔하게 세팅
                 unique_bat_players = list(set(bat_ok_players))
                 b_summary = "✅ **반영된 선수**: " + ", ".join([f"`{p}`" for p in unique_bat_players])
             else:
@@ -286,7 +286,7 @@ class PlayerRecord(commands.Cog):
                 p_summary += f"\n❌ **제외된 인원**: 외 `{pit_skip_count}명` (시트에 이름이 존재하지 않음)"
             embed.add_field(name="🥎 투수 누적 반영 결과", value=p_summary, inline=False)
 
-        status_text = "✅ 명단 동기화 및 스프레드시트 연동 성공" if (bat_ok or pit_ok) else "❌ 구글 연동 실패 (Railway 환경변수 GOOGLE_CREDS_JSON 확인 요망)"
+        status_text = "✅ 명단 동기화 및 스프레드시트 연동 성공" if (bat_ok or pit_ok) else "❌ 구글 연동 실패 (Railway 환경변수 GOOGLE_CRED_JSON 내용을 다시 확인해 주세요)"
         embed.add_field(name="구글 API 통신 상태", value=status_text, inline=False)
         embed.set_footer(text=f"요청자: {ctx.author.display_name}")
         
@@ -311,4 +311,3 @@ class PlayerRecord(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(PlayerRecord(bot))
-    
