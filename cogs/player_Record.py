@@ -135,14 +135,13 @@ class PlayerRecord(commands.Cog):
         headers = []
         
         for idx, row in df.iterrows():
-            # 💡 핵심 수정: 행 내부에서 nan 값이 아닌 실제 값들만 추출하여 공백 제거 후 결합
             row_str = [str(val).strip() for val in row.values if pd.notna(val) and str(val).strip() != ""]
             full_line = "".join(row_str)
             
             if not full_line:
                 continue
                 
-            # 💡 위치 무관 섹션 판별: 행의 어디든 '타자기록'이나 '투수기록' 문구가 들어가면 감지
+            # 위치 무관 섹션 판별
             if "타자기록" in full_line.replace(" ", ""):
                 current_section = "batting"
                 headers = []
@@ -155,7 +154,7 @@ class PlayerRecord(commands.Cog):
                 current_section = None
                 continue
             
-            # 엑셀 시트 내 헤더 라인 검출 (밀려있어도 단어 조합으로 포착)
+            # 헤더 라인 검출
             if current_section == "batting" and ("선수명" in row_str or "이름" in row_str) and "타수" in row_str:
                 headers = [str(v).strip() for v in row.values]
                 continue
@@ -232,11 +231,9 @@ class PlayerRecord(commands.Cog):
                 excel_file = pd.ExcelFile(io.BytesIO(file_bytes))
                 sheet_names = excel_file.sheet_names
                 
-                target_sheets = [s for s in sheet_names if "기록지" in s or "홈" in s or "원정" in s or "어웨이" in s]
-                if not target_sheets:
-                    target_sheets = sheet_names
-                    
-                for sheet in target_sheets:
+                # 💡 [🔥 핵심 수정] 시트 이름 조건 필터를 완전히 제거했습니다!
+                # 파일 내부에 있는 모든 시트(홈, 원정, Sheet1 등)를 무조건 전부 긁어옵니다.
+                for sheet in sheet_names:
                     df = excel_file.parse(sheet_name=sheet, header=None)
                     self._parse_single_sheet(df, batting_records, pitching_records)
                     
@@ -254,12 +251,10 @@ class PlayerRecord(commands.Cog):
         bat_ok, bat_ok_players, bat_skip_count = await loop.run_in_executor(
             None, sync_update_google_sheet, match_type, "타자 기록", batting_records, False
         )
-        print(f"[Debug] 타자 반영결과 - 성공: {bat_ok_players}, 제외수: {bat_skip_count}")
         
         pit_ok, pit_ok_players, pit_skip_count = await loop.run_in_executor(
             None, sync_update_google_sheet, match_type, "투수 기록", pitching_records, True
         )
-        print(f"[Debug] 투수 반영결과 - 성공: {pit_ok_players}, 제외수: {pit_skip_count}")
 
         embed = discord.Embed(
             title=f"📊 [{match_type}] 홈 & 원정 경기 기록 통합 반영",
@@ -270,7 +265,9 @@ class PlayerRecord(commands.Cog):
         
         if batting_records:
             if bat_ok_players:
-                b_summary = "✅ **반영된 선수**: " + ", ".join([f"`{p}`" for p in bat_ok_players])
+                # 중복 이름을 제거하여 깔끔하게 세팅
+                unique_bat_players = list(set(bat_ok_players))
+                b_summary = "✅ **반영된 선수**: " + ", ".join([f"`{p}`" for p in unique_bat_players])
             else:
                 b_summary = "⚠️ *스프레드시트에 일치하는 타자 없음*"
                 
@@ -280,7 +277,8 @@ class PlayerRecord(commands.Cog):
             
         if pitching_records:
             if pit_ok_players:
-                p_summary = "✅ **반영된 선수**: " + ", ".join([f"`{p}`" for p in pit_ok_players])
+                unique_pit_players = list(set(pit_ok_players))
+                p_summary = "✅ **반영된 선수**: " + ", ".join([f"`{p}`" for p in unique_pit_players])
             else:
                 p_summary = "⚠️ *스프레드시트에 일치하는 투수 없음*"
                 
@@ -313,3 +311,4 @@ class PlayerRecord(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(PlayerRecord(bot))
+    
