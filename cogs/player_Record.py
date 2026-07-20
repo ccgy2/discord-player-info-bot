@@ -8,6 +8,13 @@ import gspread
 import discord
 from discord.ext import commands
 
+# ---------- 스프레드시트 링크 및 ID 매핑 ----------
+# 요청하신 스프레드시트 주소에서 고유 Key(ID)를 추출하여 매핑했습니다.
+SPREADSHEET_MAPPING = {
+    "연습경기": "181T8HXTv5G0WemE8Zspyzk2Ye8dvU78rIK_3wWOt2oQ",
+    "리그경기": "1bgYyE2BwiRL9k9TUJavbi1S-iCs7N3zW3rtPL5ygk6o"
+}
+
 # ---------- 구글 스프레드시트 연동 설정 ----------
 try:
     # 1. 먼저 Railway 환경 변수(Variables)에 등록된 키가 있는지 확인합니다.
@@ -44,6 +51,7 @@ def update_google_sheet(match_type: str, sheet_name: str, records: list, is_pitc
     try:
         spreadsheet_id = SPREADSHEET_MAPPING.get(match_type)
         if not spreadsheet_id:
+            print(f"❌ '{match_type}'에 매핑된 스프레드시트 ID를 찾을 수 없습니다.")
             return False
             
         doc = gc.open_by_key(spreadsheet_id)
@@ -51,6 +59,7 @@ def update_google_sheet(match_type: str, sheet_name: str, records: list, is_pitc
         try:
             worksheet = doc.worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound:
+            # 지정한 시트(타자기록/투수기록)가 없으면 첫 번째 시트를 기본으로 사용합니다.
             worksheet = doc.get_worksheet(0)
             
         all_values = worksheet.get_all_values()
@@ -91,7 +100,7 @@ def update_google_sheet(match_type: str, sheet_name: str, records: list, is_pitc
                         except ValueError:
                             current_val = 0.0
                         
-                        # 투수 이닝 누적 계산 처리
+                        # 투수 이닝 누적 계산 처리 / 타자 및 일반 스탯 기존 값 + 새 값 누적 처리
                         if is_pitcher and key == "이닝":
                             new_val = add_innings(current_val, float(val))
                         else:
@@ -101,6 +110,7 @@ def update_google_sheet(match_type: str, sheet_name: str, records: list, is_pitc
                                 
                         worksheet.update_cell(player_row_idx, col_idx + 1, new_val)
             else:
+                # 명단에 없는 신규 선수일 경우 행을 추가합니다.
                 new_row = [""] * len(header)
                 new_row[name_col_idx] = player_name
                 for key, val in row_data.items():
@@ -119,7 +129,6 @@ def update_google_sheet(match_type: str, sheet_name: str, records: list, is_pitc
 class PlayerRecord(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # 메인 bot.py에서 연동해 둔 firestore db 객체를 안전하게 끌어와서 사용합니다.
         self.db = getattr(bot, "db", None)
 
     async def process_excel_record(self, ctx, match_type: str, attachment: discord.Attachment):
@@ -191,7 +200,6 @@ class PlayerRecord(commands.Cog):
                 p_name = row_dict.get("선수명")
                 if p_name and p_name != "nan" and p_name != "" and p_name not in ["승", "패", "홀", "세"]:
                     try:
-                        # 공백 데이터 필터링 후 0으로 보완
                         inn_val = row_dict.get("이닝", "0")
                         inn_val = float(inn_val) if inn_val and inn_val != "nan" else 0.0
                         
@@ -212,7 +220,7 @@ class PlayerRecord(commands.Cog):
             await ctx.send("❌ 엑셀 양식에서 유효한 타자/투수 기록을 찾지 못했습니다.")
             return
 
-        # 1. Firestore DB 백업 연동 (메인 봇의 db 객체가 활성화 상태일 때 진행)
+        # 1. Firestore DB 백업 연동
         if self.db:
             for b in batting_records:
                 ref = self.db.collection("records").document(b["선수명"])
@@ -234,7 +242,7 @@ class PlayerRecord(commands.Cog):
                         "updated_at": datetime.now(timezone.utc).isoformat()
                     })
 
-        # 2. 구글 스프레드시트 누적 업데이트
+        # 2. 구글 스프레드시트 누적 업데이트 (시트의 탭 이름이 '타자기록', '투수기록' 기준)
         gs_bat_success = update_google_sheet(match_type, "타자기록", batting_records, is_pitcher=False)
         gs_pit_success = update_google_sheet(match_type, "투수기록", pitching_records, is_pitcher=True)
 
@@ -262,7 +270,7 @@ class PlayerRecord(commands.Cog):
                 p_summary += f"*외 {len(pitching_records)-10}명의 투수*"
             embed.add_field(name=f"🥎 투수 합산 기록 ({len(pitching_records)}명)", value=p_summary, inline=False)
 
-        status_text = "✅ 성공적으로 반영됨" if (gs_bat_success or gs_pit_success) else "⚠️ 구글 연동 오류 (권한 설정 확인)"
+        status_text = "✅ 성공적으로 반영됨" if (gs_bat_success or gs_pit_success) else "⚠️ 구글 연동 오류 (권한 및 시트명 확인)"
         embed.add_field(name="구글 스프레드시트 상태", value=status_text, inline=False)
         embed.set_footer(text=f"요청자: {ctx.author.display_name}")
         
@@ -309,7 +317,6 @@ class PlayerRecord(commands.Cog):
             timestamp=datetime.now(timezone.utc)
         )
         
-        # 메인 bot.py 모듈에 존재하는 아바타 주소 변환 함수 재사용 시도
         try:
             from bot import safe_avatar_urls
             avatar_url, _ = safe_avatar_urls(nick)
