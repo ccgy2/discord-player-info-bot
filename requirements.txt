@@ -8,3 +8,4 @@ numpy
 google-genai
 pandas
 openpyxl
+gspread
