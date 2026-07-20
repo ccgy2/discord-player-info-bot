@@ -6,3 +6,5 @@ pypdf
 sentence-transformers
 numpy
 google-genai
+pandas
+openpyxl
