@@ -9,7 +9,6 @@ import discord
 from discord.ext import commands
 
 # ---------- 스프레드시트 링크 및 ID 매핑 ----------
-# 요청하신 스프레드시트 주소에서 고유 Key(ID)를 추출하여 매핑했습니다.
 SPREADSHEET_MAPPING = {
     "연습경기": "181T8HXTv5G0WemE8Zspyzk2Ye8dvU78rIK_3wWOt2oQ",
     "리그경기": "1bgYyE2BwiRL9k9TUJavbi1S-iCs7N3zW3rtPL5ygk6o"
@@ -59,7 +58,8 @@ def update_google_sheet(match_type: str, sheet_name: str, records: list, is_pitc
         try:
             worksheet = doc.worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound:
-            # 지정한 시트(타자기록/투수기록)가 없으면 첫 번째 시트를 기본으로 사용합니다.
+            # 정확한 탭을 찾지 못했을 때의 예외 처리
+            print(f"⚠️ '{sheet_name}' 탭을 찾지 못해 첫 번째 시트를 가져옵니다.")
             worksheet = doc.get_worksheet(0)
             
         all_values = worksheet.get_all_values()
@@ -242,9 +242,9 @@ class PlayerRecord(commands.Cog):
                         "updated_at": datetime.now(timezone.utc).isoformat()
                     })
 
-        # 2. 구글 스프레드시트 누적 업데이트 (시트의 탭 이름이 '타자기록', '투수기록' 기준)
-        gs_bat_success = update_google_sheet(match_type, "타자기록", batting_records, is_pitcher=False)
-        gs_pit_success = update_google_sheet(match_type, "투수기록", pitching_records, is_pitcher=True)
+        # 2. 구글 스프레드시트 누적 업데이트 (시트의 실제 탭 이름인 '타자 기록', '투수 기록'으로 수정 완료)
+        gs_bat_success = update_google_sheet(match_type, "타자 기록", batting_records, is_pitcher=False)
+        gs_pit_success = update_google_sheet(match_type, "투수 기록", pitching_records, is_pitcher=True)
 
         # 3. 디스코드 결과 임베드 출력
         embed = discord.Embed(
