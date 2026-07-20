@@ -28,7 +28,7 @@ def init_gspread():
         print("⚠️ 구글 스프레드시트 클라이언트 초기화 에러:", e)
     return None
 
-# 야구 이닝 누적 계산용 헬퍼 함수
+# 야구 이닝(소수점 .1, .2) 합산 계산용 헬퍼 함수
 def add_innings(current_inn: float, new_inn: float) -> float:
     c_int = int(current_inn)
     c_frac = int(round((current_inn - c_int) * 10))
@@ -37,7 +37,7 @@ def add_innings(current_inn: float, new_inn: float) -> float:
     total_outs = (c_int * 3 + c_frac) + (n_int * 3 + n_frac)
     return (total_outs // 3) + (total_outs % 3) / 10.0
 
-# [🔥 핵심 수정] '이름' 컬럼을 기준으로 대조하여 연산 및 업데이트하는 동기 함수
+# 구글 스프레드시트 '이름' 컬럼 기준으로 누적 데이터 업데이트
 def sync_update_google_sheet(match_type: str, sheet_name: str, records: list, is_pitcher=False):
     client = init_gspread()
     if not client:
@@ -60,9 +60,10 @@ def sync_update_google_sheet(match_type: str, sheet_name: str, records: list, is
         if not all_values:
             return False, [], 0
             
-        # 💡 유연한 헤더 매칭: '이름', '선수명', '선수이름' 모두 찾아낼 수 있도록 보완
+        # 스프레드시트의 헤더 가져오기 (공백 제거)
         header = [h.strip().replace(" ", "") for h in all_values[0]]
         
+        # 구글 시트의 기준 열 index 찾기 ('이름', '선수명', '선수이름')
         name_col_idx = None
         for target in ["이름", "선수명", "선수이름"]:
             if target in header:
@@ -70,7 +71,7 @@ def sync_update_google_sheet(match_type: str, sheet_name: str, records: list, is
                 break
                 
         if name_col_idx is None:
-            print(f"❌ '{sheet_name}' 탭에서 기준이 되는 '이름' 컬럼 헤더를 찾을 수 없습니다.")
+            print(f"❌ '{sheet_name}' 탭에서 '이름' 컬럼 헤더를 찾을 수 없습니다.")
             return False, [], 0
         
         success_players = []
@@ -88,13 +89,12 @@ def sync_update_google_sheet(match_type: str, sheet_name: str, records: list, is
                     player_row_idx = idx + 1
                     break
             
-            # 스프레드시트 명단에 존재하는 선수일 경우에만 데이터 가산 업데이트 수행
+            # 명단에 존재할 때만 합산 진행
             if player_row_idx:
                 current_row_values = all_values[player_row_idx - 1]
                 for key, val in row_data.items():
                     if key == "선수명": continue
                     
-                    # 수집 데이터의 Key가 스프레드시트 헤더에 존재하는지 체크 (공백 제거 매칭)
                     mod_key = key.replace(" ", "")
                     if mod_key in header:
                         col_idx = header.index(mod_key)
@@ -117,7 +117,6 @@ def sync_update_google_sheet(match_type: str, sheet_name: str, records: list, is
                         worksheet.update_cell(player_row_idx, col_idx + 1, new_val)
                 success_players.append(player_name)
             else:
-                # 명단에 존재하지 않으면 제외 카운트 가산
                 skipped_count += 1
                 
         return True, success_players, skipped_count
@@ -139,6 +138,7 @@ class PlayerRecord(commands.Cog):
             row_str = [str(val).strip() for val in row.values if pd.notna(val)]
             full_line = " ".join(row_str)
             
+            # 섹션 판별기
             if "타자 기록" in full_line:
                 current_section = "batting"
                 headers = []
@@ -150,7 +150,8 @@ class PlayerRecord(commands.Cog):
             elif "합계" in full_line or (len(row_str) > 0 and row_str[0] == "합계"):
                 current_section = None
                 continue
-                
+            
+            # 엑셀 시트 내 헤더 라인 검출
             if current_section == "batting" and ("선수명" in row_str or "이름" in row_str) and "타수" in row_str:
                 headers = [str(v).strip() for v in row.values]
                 continue
@@ -158,13 +159,13 @@ class PlayerRecord(commands.Cog):
                 headers = [str(v).strip() for v in row.values]
                 continue
                 
+            # 타자 데이터 파싱
             if current_section == "batting" and headers:
                 row_dict = {}
                 for col_idx, col_name in enumerate(headers):
                     if pd.notna(col_name) and col_name != "nan" and col_name != "" and col_idx < len(row):
                         row_dict[col_name] = str(row.iloc[col_idx]).strip()
                 
-                # 엑셀 기록지 양식의 선수 필드명 추출
                 p_name = row_dict.get("선수명") or row_dict.get("이름")
                 if p_name and p_name != "nan" and p_name != "" and not p_name.isdigit() and p_name not in ["선수명", "이름"]:
                     try:
@@ -182,7 +183,8 @@ class PlayerRecord(commands.Cog):
                         })
                     except:
                         pass
-                        
+            
+            # 투수 데이터 파싱
             elif current_section == "pitching" and headers:
                 row_dict = {}
                 for col_idx, col_name in enumerate(headers):
@@ -225,8 +227,9 @@ class PlayerRecord(commands.Cog):
             else:
                 excel_file = pd.ExcelFile(io.BytesIO(file_bytes))
                 sheet_names = excel_file.sheet_names
-                target_sheets = [s for s in sheet_names if "홈 기록지" in s or "원정 기록지" in s or "어웨이" in s]
                 
+                # 💡 수집 대상 확장: '기록지' 문구가 들어간 모든 시트를 파싱 대상으로 지정
+                target_sheets = [s for s in sheet_names if "기록지" in s or "홈" in s or "원정" in s or "어웨이" in s]
                 if not target_sheets:
                     target_sheets = sheet_names
                     
@@ -245,7 +248,6 @@ class PlayerRecord(commands.Cog):
         loop = asyncio.get_running_loop()
         await ctx.send("📊 데이터를 분석 완료했습니다. 구글 명단과 일치하는 선수 정보만 선별해 누적 연산을 수행합니다...")
         
-        # 구글 시트 업데이트 비동기 스레드 실행
         bat_ok, bat_ok_players, bat_skip_count = await loop.run_in_executor(
             None, sync_update_google_sheet, match_type, "타자 기록", batting_records, False
         )
@@ -253,7 +255,6 @@ class PlayerRecord(commands.Cog):
             None, sync_update_google_sheet, match_type, "투수 기록", pitching_records, True
         )
 
-        # 디스코드 출력용 임베드 카드 생성
         embed = discord.Embed(
             title=f"📊 [{match_type}] 홈 & 원정 경기 기록 통합 반영",
             description=f"구글 스프레드시트 명단에 명시된 팀원만 필터링하여 시즌 데이터에 합산 처리했습니다.",
@@ -261,7 +262,6 @@ class PlayerRecord(commands.Cog):
             timestamp=datetime.now(timezone.utc)
         )
         
-        # 1. 타자 명단 임베드 출력 처리 (있는 사람만 표기, 없으면 '외 X명' 묶음 처리)
         if batting_records:
             if bat_ok_players:
                 b_summary = "✅ **반영된 선수**: " + ", ".join([f"`{p}`" for p in bat_ok_players])
@@ -272,7 +272,6 @@ class PlayerRecord(commands.Cog):
                 b_summary += f"\n❌ **제외된 인원**: 외 `{bat_skip_count}명` (시트에 이름이 존재하지 않음)"
             embed.add_field(name="⚾ 타자 누적 반영 결과", value=b_summary, inline=False)
             
-        # 2. 투수 명단 임베드 출력 처리 (있는 사람만 표기, 없으면 '외 X명' 묶음 처리)
         if pitching_records:
             if pit_ok_players:
                 p_summary = "✅ **반영된 선수**: " + ", ".join([f"`{p}`" for p in pit_ok_players])
