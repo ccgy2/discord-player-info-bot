@@ -135,23 +135,27 @@ class PlayerRecord(commands.Cog):
         headers = []
         
         for idx, row in df.iterrows():
-            row_str = [str(val).strip() for val in row.values if pd.notna(val)]
-            full_line = " ".join(row_str)
+            # 💡 핵심 수정: 행 내부에서 nan 값이 아닌 실제 값들만 추출하여 공백 제거 후 결합
+            row_str = [str(val).strip() for val in row.values if pd.notna(val) and str(val).strip() != ""]
+            full_line = "".join(row_str)
             
-            # 섹션 판별기
-            if "타자 기록" in full_line:
+            if not full_line:
+                continue
+                
+            # 💡 위치 무관 섹션 판별: 행의 어디든 '타자기록'이나 '투수기록' 문구가 들어가면 감지
+            if "타자기록" in full_line.replace(" ", ""):
                 current_section = "batting"
                 headers = []
                 continue
-            elif "투수 기록" in full_line:
+            elif "투수기록" in full_line.replace(" ", ""):
                 current_section = "pitching"
                 headers = []
                 continue
-            elif "합계" in full_line or (len(row_str) > 0 and row_str[0] == "합계"):
+            elif "합계" in full_line or row_str[0] == "합계":
                 current_section = None
                 continue
             
-            # 엑셀 시트 내 헤더 라인 검출
+            # 엑셀 시트 내 헤더 라인 검출 (밀려있어도 단어 조합으로 포착)
             if current_section == "batting" and ("선수명" in row_str or "이름" in row_str) and "타수" in row_str:
                 headers = [str(v).strip() for v in row.values]
                 continue
@@ -170,7 +174,7 @@ class PlayerRecord(commands.Cog):
                 if p_name and p_name != "nan" and p_name != "" and not p_name.isdigit() and p_name not in ["선수명", "이름"]:
                     try:
                         def safe_int(v):
-                            if not v or v == "nan": return 0
+                            if not v or v == "nan" or v == "": return 0
                             return int(float(v))
                         
                         batting_records.append({
@@ -195,7 +199,7 @@ class PlayerRecord(commands.Cog):
                 if p_name and p_name != "nan" and p_name != "" and p_name not in ["승", "패", "홀", "세", "선수명", "이름"]:
                     try:
                         def safe_int(v):
-                            if not v or v == "nan": return 0
+                            if not v or v == "nan" or v == "": return 0
                             return int(float(v))
                             
                         inn_val = row_dict.get("이닝", "0")
@@ -228,7 +232,6 @@ class PlayerRecord(commands.Cog):
                 excel_file = pd.ExcelFile(io.BytesIO(file_bytes))
                 sheet_names = excel_file.sheet_names
                 
-                # 💡 수집 대상 확장: '기록지' 문구가 들어간 모든 시트를 파싱 대상으로 지정
                 target_sheets = [s for s in sheet_names if "기록지" in s or "홈" in s or "원정" in s or "어웨이" in s]
                 if not target_sheets:
                     target_sheets = sheet_names
@@ -251,9 +254,12 @@ class PlayerRecord(commands.Cog):
         bat_ok, bat_ok_players, bat_skip_count = await loop.run_in_executor(
             None, sync_update_google_sheet, match_type, "타자 기록", batting_records, False
         )
+        print(f"[Debug] 타자 반영결과 - 성공: {bat_ok_players}, 제외수: {bat_skip_count}")
+        
         pit_ok, pit_ok_players, pit_skip_count = await loop.run_in_executor(
             None, sync_update_google_sheet, match_type, "투수 기록", pitching_records, True
         )
+        print(f"[Debug] 투수 반영결과 - 성공: {pit_ok_players}, 제외수: {pit_skip_count}")
 
         embed = discord.Embed(
             title=f"📊 [{match_type}] 홈 & 원정 경기 기록 통합 반영",
