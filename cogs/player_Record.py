@@ -3,7 +3,6 @@ import io
 import json
 import re
 import asyncio
-import traceback
 from datetime import datetime, timezone
 import pandas as pd
 import gspread
@@ -24,7 +23,7 @@ def init_gspread():
         else:
             if os.path.exists('google_creds.json'):
                 return gspread.service_account(filename='google_creds.json'), None
-            return None, "인증 JSON 파일을 찾을 수 없습니다."
+            return None, "인증 JSON 환경변수/파일을 찾을 수 없습니다."
     except Exception as e:
         return None, f"구글 인증 JSON 해석 오류: {e}"
 
@@ -149,9 +148,10 @@ def sync_update_google_sheet(match_type: str, sheet_type: str, records: list, is
         return True, success_players, skipped_count, "성공"
         
     except gspread.exceptions.APIError as api_err:
-        if "PERMISSION_DENIED" in str(api_err) or "403" in str(api_err):
-            return False, [], 0, "권한 없음 (서비스 계정에 구글 시트 편집자 권한 공유 필요)"
-        return False, [], 0, f"구글 API 오류: {api_err}"
+        err_str = str(api_err)
+        if "PERMISSION_DENIED" in err_str or "403" in err_str:
+            return False, [], 0, f"권한 없음 (구글 시트에 sheet-bot 계정 공유 필요)"
+        return False, [], 0, f"구글 API 오류: {err_str}"
     except Exception as e:
         return False, [], 0, f"오류 ({type(e).__name__}): {e}"
 
