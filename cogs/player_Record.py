@@ -22,19 +22,18 @@ def init_gspread():
         env_creds = os.getenv("GOOGLE_CREDS_JSON") or os.getenv("GOOGLE_CRED_JSON")
         if env_creds:
             creds_dict = json.loads(env_creds)
-            return gspread.service_account_from_dict(creds_dict)
+            return gspread.service_account_from_dict(creds_dict), None
         else:
             if os.path.exists('google_creds.json'):
-                return gspread.service_account(filename='google_creds.json')
+                return gspread.service_account(filename='google_creds.json'), None
+            return None, "환경변수(GOOGLE_CREDS_JSON) 또는 google_creds.json 파일을 찾을 수 없습니다."
     except Exception as e:
-        print("⚠️ 구글 스프레드시트 클라이언트 초기화 에러:", e)
-    return None
+        return None, f"구글 인증 JSON 해석 오류: {e}"
 
 def clean_player_name(raw_name: str) -> str:
     """닉네임 뒤의 (에러), (대타), (PH) 등 괄호 부가설명 및 공백 제거"""
     if not raw_name:
         return ""
-    # 괄호와 괄호 안의 문자열 제거
     cleaned = re.sub(r'\(.*?\)', '', str(raw_name))
     cleaned = re.sub(r'\[.*?\]', '', cleaned)
     return cleaned.strip()
@@ -47,28 +46,50 @@ def add_innings(current_inn: float, new_inn: float) -> float:
     total_outs = (c_int * 3 + c_frac) + (n_int * 3 + n_frac)
     return (total_outs // 3) + (total_outs % 3) / 10.0
 
-def sync_update_google_sheet(match_type: str, sheet_name: str, records: list, is_pitcher=False):
-    client = init_gspread()
+def sync_update_google_sheet(match_type: str, sheet_type: str, records: list, is_pitcher=False):
+    client, err_msg = init_gspread()
     if not client:
-        return False, [], 0
+        return False, [], 0, f"인증 실패: {err_msg}"
+        
     try:
         spreadsheet_id = SPREADSHEET_MAPPING.get(match_type)
-        if not spreadsheet_id: return False, [], 0
+        if not spreadsheet_id: 
+            return False, [], 0, f"[{match_type}] 매핑 ID가 존재하지 않음"
+            
         doc = client.open_by_key(spreadsheet_id)
-        worksheet = doc.worksheet(sheet_name)
-        all_values = worksheet.get_all_values()
-        if not all_values: return False, [], 0
         
+        # 탭 이름 유연하게 찾기 ("타자 기록", "타자", "투수 기록", "투수" 등)
+        worksheet = None
+        worksheets = doc.worksheets()
+        target_keyword = "타자" if "타자" in sheet_type else "투수"
+        
+        for ws in worksheets:
+            if target_keyword in ws.title:
+                worksheet = ws
+                break
+                
+        if not worksheet:
+            return False, [], 0, f"스프레드시트에서 '{target_keyword}' 관련 탭을 찾지 못했습니다."
+            
+        all_values = worksheet.get_all_values()
+        if not all_values: 
+            return False, [], 0, f"'{worksheet.title}' 탭이 비어있습니다."
+        
+        # 첫 번째 행에서 '이름' 또는 '선수명' 또는 A열 찾기
         header = [h.strip().replace(" ", "") for h in all_values[0]]
         name_col_idx = None
-        for target in ["이름", "선수명", "선수이름"]:
+        for target in ["이름", "선수명", "선수이름", "닉네임", "NAME", "PLAYER"]:
             if target in header:
                 name_col_idx = header.index(target)
                 break
-        if name_col_idx is None: return False, [], 0
-        
+                
+        # 헤더 이름을 못 찾은 경우 기본값 0열(A열) 지정
+        if name_col_idx is None:
+            name_col_idx = 0
+            
         success_players = []
         skipped_count = 0
+        
         for row_data in records:
             player_name = clean_player_name(row_data.get("선수명", ""))
             if not player_name: continue
@@ -76,7 +97,7 @@ def sync_update_google_sheet(match_type: str, sheet_name: str, records: list, is
             player_row_idx = None
             for idx, row in enumerate(all_values):
                 if idx == 0: continue
-                if len(row) > name_col_idx and row[name_col_idx].strip() == player_name:
+                if len(row) > name_col_idx and row[name_col_idx].strip().lower() == player_name.lower():
                     player_row_idx = idx + 1
                     break
                     
@@ -102,10 +123,13 @@ def sync_update_google_sheet(match_type: str, sheet_name: str, records: list, is
                 success_players.append(player_name)
             else:
                 skipped_count += 1
-        return True, success_players, skipped_count
+                
+        return True, success_players, skipped_count, "성공"
+        
+    except gspread.exceptions.APIError as api_err:
+        return False, [], 0, f"구글 API 권한/응답 에러: {api_err}"
     except Exception as e:
-        print("Google Sheet Sync Error:", e)
-        return False, [], 0
+        return False, [], 0, f"시트 업데이트 작업 중 예외 발생: {e}"
 
 class PlayerRecord(commands.Cog):
     def __init__(self, bot):
@@ -123,7 +147,6 @@ class PlayerRecord(commands.Cog):
             if not full_line:
                 continue
                 
-            # [팀명] 타자 기록 및 [팀명] 투수 기록 섹션 강력 탐지
             if ("타자" in full_line and "기록" in full_line) or "타자기록" in full_line:
                 current_section = "batting"
                 headers = []
@@ -138,7 +161,6 @@ class PlayerRecord(commands.Cog):
                 current_section = None
                 continue
             
-            # 헤더 판단
             if current_section == "batting" and ("선수명" in row_str or "이름" in row_str) and "타수" in row_str:
                 headers = [str(v).strip() for v in row.values]
                 logs.append(f"  📋 타자 헤더 감지 완료")
@@ -148,7 +170,6 @@ class PlayerRecord(commands.Cog):
                 logs.append(f"  📋 투수 헤더 감지 완료")
                 continue
                 
-            # 타자 데이터 파싱
             if current_section == "batting" and headers:
                 row_dict = {}
                 for col_idx, col_name in enumerate(headers):
@@ -175,7 +196,6 @@ class PlayerRecord(commands.Cog):
                     except Exception as e:
                         logs.append(f"    ❌ 타자 추출 실패 ({p_name}): {e}")
             
-            # 투수 데이터 파싱
             elif current_section == "pitching" and headers:
                 row_dict = {}
                 for col_idx, col_name in enumerate(headers):
@@ -224,7 +244,7 @@ class PlayerRecord(commands.Cog):
                     self._parse_single_sheet(df, sheet, batting_records, pitching_records, debug_logs)
                     
         except Exception as e:
-            await ctx.send(f"❌ 파일 분석 중 에러 발생: `{e}`\n```{traceback.format_exc()}```")
+            await ctx.send(f"❌ 파일 분석 중 에러 발생: `{e}`")
             return
 
         log_text = "\n".join(debug_logs)
@@ -240,10 +260,10 @@ class PlayerRecord(commands.Cog):
         loop = asyncio.get_running_loop()
         await ctx.send("📊 데이터를 정제하여 구글 스프레드시트에 누적 연산을 시작합니다...")
         
-        bat_ok, bat_ok_players, bat_skip_count = await loop.run_in_executor(
+        bat_ok, bat_ok_players, bat_skip_count, bat_err = await loop.run_in_executor(
             None, sync_update_google_sheet, match_type, "타자 기록", batting_records, False
         )
-        pit_ok, pit_ok_players, pit_skip_count = await loop.run_in_executor(
+        pit_ok, pit_ok_players, pit_skip_count, pit_err = await loop.run_in_executor(
             None, sync_update_google_sheet, match_type, "투수 기록", pitching_records, True
         )
 
@@ -263,7 +283,11 @@ class PlayerRecord(commands.Cog):
             if pit_skip_count > 0: p_summary += f" (제외 {pit_skip_count}명)"
             embed.add_field(name="🥎 투수 결과", value=p_summary, inline=False)
 
-        status = "✅ 시트 반영 성공" if (bat_ok or pit_ok) else "❌ 시트 연동 실패"
+        if bat_ok or pit_ok:
+            status = "✅ 시트 반영 성공"
+        else:
+            status = f"❌ 타자 연동 오류: `{bat_err}`\n❌ 투수 연동 오류: `{pit_err}`"
+            
         embed.add_field(name="구글 API 상태", value=status, inline=False)
         await ctx.send(embed=embed)
 
