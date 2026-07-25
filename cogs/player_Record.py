@@ -39,16 +39,15 @@ def clean_player_name(raw_name: str) -> str:
     return cleaned.strip()
 
 def safe_float(val) -> float:
-    """수식/함수(=) 및 빈값을 완전히 무시하고 안전한 float 변환"""
+    """수식(=) 및 빈값을 완전히 무시하고 안전하게 float 변환"""
     try:
         if val is None or val == "":
             return 0.0
         str_val = str(val).strip()
-        # 수식(=)으로 시작하는 엑셀 펑션은 완전히 무시 (0 처리)
         if str_val.startswith('='):
             return 0.0
         return float(str_val.replace(",", ""))
-    except ValueError:
+    except (ValueError, TypeError):
         return 0.0
 
 def add_innings(current_inn: float, new_inn: float) -> float:
@@ -60,6 +59,15 @@ def add_innings(current_inn: float, new_inn: float) -> float:
     
     total_outs = (c_int * 3 + c_frac) + (n_int * 3 + n_frac)
     return (total_outs // 3) + (total_outs % 3) / 10.0
+
+def col_idx_to_letter(col_idx: int) -> str:
+    """열 번호(0부터 시작)를 엑셀 컬럼 문자(A, B, C... Z, AA 등)로 변환"""
+    result = ""
+    col_idx += 1
+    while col_idx > 0:
+        col_idx, remainder = divmod(col_idx - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
 
 def sync_update_google_sheet(match_type: str, sheet_type: str, records: list, is_pitcher=False):
     client, err_msg = init_gspread()
@@ -88,7 +96,7 @@ def sync_update_google_sheet(match_type: str, sheet_type: str, records: list, is
         if not all_values: 
             return False, [], 0, f"'{worksheet.title}' 탭에 데이터가 없습니다."
         
-        # 헤더 가져오기
+        # 헤더 공백 제거 및 정제
         header = [str(h).strip().replace(" ", "") for h in all_values[0]]
         
         name_col_idx = 0
@@ -133,8 +141,8 @@ def sync_update_google_sheet(match_type: str, sheet_type: str, records: list, is
                         add_val = safe_float(val)
                         
                         if add_val == 0.0:
-                            continue # 더할 값이 0이면 구글 API 호출 생략 (속도 및 에러 방지)
-
+                            continue # 더할 값이 0이면 패스
+                            
                         if is_pitcher and key == "이닝":
                             new_val = add_innings(current_val, add_val)
                         else:
@@ -142,8 +150,9 @@ def sync_update_google_sheet(match_type: str, sheet_type: str, records: list, is
                             if new_val.is_integer(): 
                                 new_val = int(new_val)
                         
-                        # 구글 API에 정확히 값 업데이트 (문자열 변환하여 전송)
-                        worksheet.update_cell(player_row_idx, col_idx + 1, str(new_val))
+                        # A1 표기법을 사용한 완전 안전한 셀 업데이트
+                        cell_address = f"{col_idx_to_letter(col_idx)}{player_row_idx}"
+                        worksheet.update_acell(cell_address, new_val)
                         
                 success_players.append(player_name)
             else:
