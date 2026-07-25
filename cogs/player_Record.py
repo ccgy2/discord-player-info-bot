@@ -10,14 +10,12 @@ import gspread
 import discord
 from discord.ext import commands
 
-# ---------- 스프레드시트 링크 및 ID 매핑 ----------
 SPREADSHEET_MAPPING = {
     "연습경기": "181T8HXTv5G0WemE8Zspyzk2Ye8dvU78rIK_3wWOt2oQ",
     "리그경기": "1bgYyE2BwiRL9k9TUJavbi1S-iCs7N3zW3rtPL5ygk6o"
 }
 
 def init_gspread():
-    """구글 서비스 계정 인증 객체 빌더 함수"""
     try:
         env_creds = os.getenv("GOOGLE_CREDS_JSON") or os.getenv("GOOGLE_CRED_JSON")
         if env_creds:
@@ -26,12 +24,11 @@ def init_gspread():
         else:
             if os.path.exists('google_creds.json'):
                 return gspread.service_account(filename='google_creds.json'), None
-            return None, "환경변수(GOOGLE_CREDS_JSON) 또는 google_creds.json 파일을 찾을 수 없습니다."
+            return None, "인증 JSON 파일을 찾을 수 없습니다."
     except Exception as e:
         return None, f"구글 인증 JSON 해석 오류: {e}"
 
 def clean_player_name(raw_name: str) -> str:
-    """닉네임 뒤의 (에러), (대타) 등 괄호 제거 및 공백 정제"""
     if not raw_name:
         return ""
     cleaned = re.sub(r'\(.*?\)', '', str(raw_name))
@@ -39,7 +36,6 @@ def clean_player_name(raw_name: str) -> str:
     return cleaned.strip()
 
 def safe_float(val) -> float:
-    """수식(=) 및 빈값을 완전히 무시하고 안전하게 float 변환"""
     try:
         if val is None or val == "":
             return 0.0
@@ -51,7 +47,6 @@ def safe_float(val) -> float:
         return 0.0
 
 def add_innings(current_inn: float, new_inn: float) -> float:
-    """야구 이닝 합산 공식 (3아웃 = 1이닝)"""
     c_int = int(current_inn)
     c_frac = int(round((current_inn - c_int) * 10))
     n_int = int(new_inn)
@@ -61,7 +56,6 @@ def add_innings(current_inn: float, new_inn: float) -> float:
     return (total_outs // 3) + (total_outs % 3) / 10.0
 
 def col_idx_to_letter(col_idx: int) -> str:
-    """열 번호(0부터 시작)를 엑셀 컬럼 문자(A, B, C... Z, AA 등)로 변환"""
     result = ""
     col_idx += 1
     while col_idx > 0:
@@ -81,9 +75,8 @@ def sync_update_google_sheet(match_type: str, sheet_type: str, records: list, is
             
         doc = client.open_by_key(spreadsheet_id)
         
-        # 탭 찾기 ("타자", "투수" 키워드로 탐색)
-        worksheet = None
         target_keyword = "타자" if "타자" in sheet_type else "투수"
+        worksheet = None
         for ws in doc.worksheets():
             if target_keyword in ws.title:
                 worksheet = ws
@@ -96,7 +89,6 @@ def sync_update_google_sheet(match_type: str, sheet_type: str, records: list, is
         if not all_values: 
             return False, [], 0, f"'{worksheet.title}' 탭에 데이터가 없습니다."
         
-        # 헤더 공백 제거 및 정제
         header = [str(h).strip().replace(" ", "") for h in all_values[0]]
         
         name_col_idx = 0
@@ -113,27 +105,24 @@ def sync_update_google_sheet(match_type: str, sheet_type: str, records: list, is
             if not player_name: 
                 continue
             
-            # 선수 행 찾기
             player_row_idx = None
             for idx, row in enumerate(all_values):
                 if idx == 0: continue
                 if len(row) > name_col_idx and row[name_col_idx].strip().lower() == player_name.lower():
-                    player_row_idx = idx + 1 # 1-based index
+                    player_row_idx = idx + 1
                     break
                     
             if player_row_idx:
                 current_row_values = all_values[player_row_idx - 1]
                 
-                # 각 스탯 항목별 누적 연산
                 for key, val in row_data.items():
                     if key == "선수명": continue
                     mod_key = key.replace(" ", "")
                     
                     if mod_key in header:
                         col_idx = header.index(mod_key)
-                        
-                        # 기존 시트의 값 가져오기 (수식 셀은 건너뜀)
                         cell_str = str(current_row_values[col_idx]).strip() if col_idx < len(current_row_values) else ""
+                        
                         if cell_str.startswith('='): 
                             continue
                             
@@ -141,7 +130,7 @@ def sync_update_google_sheet(match_type: str, sheet_type: str, records: list, is
                         add_val = safe_float(val)
                         
                         if add_val == 0.0:
-                            continue # 더할 값이 0이면 패스
+                            continue
                             
                         if is_pitcher and key == "이닝":
                             new_val = add_innings(current_val, add_val)
@@ -150,7 +139,6 @@ def sync_update_google_sheet(match_type: str, sheet_type: str, records: list, is
                             if new_val.is_integer(): 
                                 new_val = int(new_val)
                         
-                        # A1 표기법을 사용한 완전 안전한 셀 업데이트
                         cell_address = f"{col_idx_to_letter(col_idx)}{player_row_idx}"
                         worksheet.update_acell(cell_address, new_val)
                         
@@ -161,6 +149,8 @@ def sync_update_google_sheet(match_type: str, sheet_type: str, records: list, is
         return True, success_players, skipped_count, "성공"
         
     except gspread.exceptions.APIError as api_err:
+        if "PERMISSION_DENIED" in str(api_err) or "403" in str(api_err):
+            return False, [], 0, "권한 없음 (서비스 계정에 구글 시트 편집자 권한 공유 필요)"
         return False, [], 0, f"구글 API 오류: {api_err}"
     except Exception as e:
         return False, [], 0, f"오류 ({type(e).__name__}): {e}"
@@ -170,6 +160,9 @@ class PlayerRecord(commands.Cog):
         self.bot = bot
 
     def _parse_single_sheet(self, df: pd.DataFrame, sheet_name: str, batting_records: list, pitching_records: list, logs: list):
+        if sheet_name in ["설명서", "펑션"]:
+            return
+
         current_section = None
         headers = []
         logs.append(f"🔍 [{sheet_name}] 스캔 시작 ({len(df)}개 행)")
