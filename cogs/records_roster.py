@@ -702,7 +702,7 @@ def safe_error_code(error: Exception) -> str:
 
 
 ACTION = re.compile(r"^(1\s*군\s*등록|2\s*군\s*말소|1\s*군\s*말소|2\s*군\s*등록)\s*(?:[:：=]|[-–—]>?)?\s*(.*)$")
-TEAM = re.compile(r"^(?:팀|소속\s*팀|소속|구단|구단명)\s*[:：=]\s*(.+)$")
+TEAM = re.compile(r"^(?:대상\s*팀|팀|소속\s*팀|소속|구단|구단명)\s*[:：=]\s*(.+)$")
 PLAYER = re.compile(r"^(?:선수|선수명|닉네임|대상\s*선수)\s*[:：=]\s*(.*)$")
 EMPTY_NAMES = {"", "-", "—", "없음", "해당없음", "해당 없음", "없습니다"}
 USER_MENTION = re.compile(r"<@!?([0-9]{17,20})>")
@@ -715,89 +715,90 @@ def plain_line(line: str) -> str:
     return line.replace("**", "").replace("`", "").strip().lstrip("#>•- ").strip("[]【】 ")
 
 
-def parse_entries(raw_text: str) -> tuple[list[dict], bool]:
-    """Extract hints, never identities. Unclear formats remain manual-review rows."""
-    lines = [plain_line(line) for line in raw_text.splitlines() if line.strip()]
-    explicit_teams = {match.group(1).strip() for line in lines if (match := TEAM.fullmatch(line))}
-    current_team = next(iter(explicit_teams)) if len(explicit_teams) == 1 else ""
-    entries = []
-    current_target = None
-    overflow = False
+SECTION = re.compile(r"^(등록\s*\(\s*Call-up\s*\)|말소\s*\(\s*Send-down\s*\))\s*:?(.*)$", re.IGNORECASE)
+NOTICE_STOP = re.compile(r"^(?:■\s*)?(?:사유\s*및\s*안내사항|안내사항|사유|비고)\s*[:：]", re.IGNORECASE)
+BULLET = re.compile(r"^(?:[-•*]\s*)?(.*?)\s*$")
+PLAYER_LINE = re.compile(r"^(?P<name>[^()（）:：]+?)\s*[（(](?P<meta>[^()（）]*)[）)]\s*[:：]\s*(?P<mention>.*)$")
 
-    def append(name, target, original, discord_user_id=""):
+
+def parse_entries(raw_text: str) -> tuple[list[dict], bool]:
+    """Parse a notice section into *hints* and user mentions, never authorize changes.
+
+    Registration (Call-up) => first; Send-down => second. The nickname is the
+    label before the position/number parentheses, never the entire row. Discord
+    roles are only modified after a matching web admin approval.
+    """
+    lines = [re.sub(r"^[\s📌■⚾]+", "", plain_line(line)).strip() for line in raw_text.splitlines() if line.strip()]
+    explicit_teams = {m.group(1).strip() for line in lines if (m := TEAM.fullmatch(line))}
+    team = next(iter(explicit_teams)) if len(explicit_teams) == 1 else ""
+    entries, target, overflow = [], None, len(explicit_teams) > 1
+
+    def append(nickname, to_squad, source, user_id=""):
         nonlocal overflow
-        if text_units(name) > 120 or text_units(current_team) > 100 or text_units(original) > 1200:
+        if any(text_units(x) > bound for x,bound in ((nickname,120),(team,100),(source,1200))):
             overflow = True
         if len(entries) >= 100:
             overflow = True
             return
-        entries.append({"id": str(len(entries)), "nickname": text(name, 120),
-                        "teamHint": text(current_team, 100), "toSquad": target,
-                        "text": text(original, 1200), "discordUserId": discord_user_id})
+        entries.append({"id":str(len(entries)),"nickname":text(nickname,120),
+                        "teamHint":text(team,100),"toSquad":to_squad,
+                        "text":text(source,1200),"discordUserId":user_id})
 
-    def names(value, target, original):
-        nonlocal overflow
-        match = PLAYER.fullmatch(value)
-        value = match.group(1) if match else value
-        if any(label in value.replace(" ", "") for label in ("1군등록", "1군말소", "2군등록", "2군말소")):
-            target = "unknown"
-            if not USER_MENTION.search(value):
-                append("", "unknown", original)
-                return
-        seen_mentions = set()
-        for name in re.split(r"[,，;；/|]+", value):
-            name = name.strip()
-            if name in EMPTY_NAMES:
-                continue
-            mentions = USER_MENTION.findall(name)
-            if mentions:
-                # IDs come only from explicit user mentions. Adjacent mentions
-                # remain independent targets; nearby display names are not proof.
-                for discord_user_id in mentions:
-                    if discord_user_id not in seen_mentions:
-                        append("", target, original, discord_user_id)
-                        seen_mentions.add(discord_user_id)
-                continue
-            if NON_USER_PING.search(name):
-                continue  # Role/everyone pings are never player identities.
-            if text_units(name) > 120:
-                overflow = True
-                append("", "unknown", original)
-            else:
-                append(name, target, original)
+    def parse_names(value, to_squad, original):
+        value = value.strip()
+        if value in EMPTY_NAMES or value in {"- 없음","• 없음"}:
+            return
+        # One player/line in the announcement format. Split neither position
+        # and jersey number on '/' nor nickname from its actual mention.
+        matched = PLAYER_LINE.fullmatch(value)
+        if matched:
+            nickname = matched.group('name').strip()
+            raw_mention = matched.group('mention').strip()
+            ids = USER_MENTION.findall(raw_mention)
+            if len(ids) == 1 and not NON_USER_PING.search(raw_mention):
+                append(nickname,to_squad,original,ids[0]);return
+            # No identity is inferred from @display-text, a role ping or two IDs.
+            append(nickname,'unknown' if len(ids)>1 or NON_USER_PING.search(raw_mention) else to_squad,original)
+            return
+        ids=USER_MENTION.findall(value)
+        if ids and not NON_USER_PING.search(value):
+            # A bare mention list has no unambiguous nickname; website matches ID.
+            for uid in dict.fromkeys(ids):append('',to_squad,original,uid)
+            return
+        # Legacy '1군 등록: 이름' or '선수: 이름' must still import as hint only.
+        m=PLAYER.fullmatch(value)
+        nickname=(m.group(1) if m else value).strip()
+        nickname=re.sub(r"\s*[（(][^()（）]*[）)]\s*$",'',nickname).strip()
+        if nickname and nickname not in EMPTY_NAMES and not NON_USER_PING.search(nickname):
+            append(nickname,to_squad,original)
 
     for line in lines:
-        team_match = TEAM.fullmatch(line)
-        if team_match:
-            current_team = team_match.group(1).strip()
+        if TEAM.fullmatch(line):continue
+        if NOTICE_STOP.match(line):
+            target=None
+            break  # Explanation below is not a second list of players.
+        section=SECTION.fullmatch(line)
+        if section:
+            target='first' if section.group(1).lower().startswith('등록') else 'second'
+            if section.group(2).strip():parse_names(section.group(2),target,line)
             continue
-        action = ACTION.fullmatch(line)
+        action=ACTION.fullmatch(line)
         if action:
-            label = action.group(1).replace(" ", "")
-            current_target = "first" if label in {"1군등록", "2군말소"} else "second"
-            if action.group(2).strip():
-                names(action.group(2), current_target, line)
+            label=action.group(1).replace(' ','')
+            target='first' if label in {'1군등록','2군말소'} else 'second'
+            if action.group(2).strip():parse_names(action.group(2),target,line)
             continue
-        player = PLAYER.fullmatch(line)
-        if current_target and player:
-            names(player.group(1), current_target, line)
-            continue
-        if current_target and not re.search(r"[:：=]|승인|날짜|사유|메모|요청|https?://", line):
-            names(line, current_target, line)
-            continue
-        if USER_MENTION.search(line) and not MENTION_METADATA.match(line):
-            names(line, "unknown", line)
-            current_target = None
-            continue
-        # A generic 등록/말소 or a different movement is not assumed to be 1군/2군.
-        if re.match(r"^(?:등록|말소|콜업|승격|강등|이동|변경)\s*[:：=]", line):
-            append("", "unknown", line)
-        current_target = None
+        if target and line.startswith(('📌','■')):
+            target=None;continue
+        if target and not line.startswith(('----','════')):
+            m=BULLET.fullmatch(line)
+            candidate=m.group(1).strip() if m else line
+            if candidate:
+                parse_names(candidate,target,line)
     if not entries:
-        overflow = overflow or text_units(raw_text) > 1200 or text_units(current_team) > 100
-        entries.append({"id": "0", "nickname": "", "teamHint": text(current_team, 100),
-                        "toSquad": "unknown", "text": text(raw_text, 1200), "discordUserId": ""})
-    return entries, overflow
+        entries.append({"id":"0","nickname":"","teamHint":text(team,100),
+                        "toSquad":"unknown","text":text(raw_text,1200),"discordUserId":""})
+    return entries,overflow
 
 
 def message_snapshot(message, config: BridgeConfig, expected_guild: str) -> dict:
