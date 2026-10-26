@@ -59,6 +59,7 @@ async def setup_hook():
     await bot.load_extension("cogs.pdf_ai")
     await bot.load_extension("cogs.warn_system")
     await bot.load_extension("cogs.vote_check")
+    await bot.load_extension("cogs.records_roster")
 
 bot.setup_hook = setup_hook
 
