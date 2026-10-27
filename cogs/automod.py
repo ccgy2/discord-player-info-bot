@@ -2695,7 +2695,15 @@ class FirebaseSettings:
         if bucket is not None and not _BUCKET.fullmatch(bucket):
             raise FirebaseConfigurationError("FIREBASE_STORAGE_BUCKET에는 gs:// 또는 경로 없이 버킷 이름만 입력하세요.")
         credential_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip() or None
-        if credential_path and not Path(credential_path).expanduser().is_absolute():
+        # The host bot may already have initialized the default Firebase app
+        # using FIREBASE_KEY. In that case, the separate ADC path is unused.
+        try:
+            existing_default = firebase_admin.get_app()
+        except ValueError:
+            existing_default = None
+        if existing_default is not None:
+            credential_path = None
+        elif credential_path and not Path(credential_path).expanduser().is_absolute():
             raise FirebaseConfigurationError("GOOGLE_APPLICATION_CREDENTIALS는 키 파일의 절대 경로여야 합니다.")
         emulator = os.environ.get("FIRESTORE_EMULATOR_HOST", "").strip() or None
         if emulator:
@@ -2730,9 +2738,26 @@ def _prepare_app(config: FirebaseSettings):
     try:
         app = firebase_admin.get_app(APP_NAME)
     except ValueError:
-        credential = _EmulatorCredential() if config.emulator_host else credentials.ApplicationDefault()
-        # Force ADC discovery/key parsing here, never in the event loop.
-        credential.get_credential()
+        if config.emulator_host:
+            credential = _EmulatorCredential()
+            credential.get_credential()
+        else:
+            # Reuse the credential already initialized by bot.py's
+            # init_firebase() (including its FIREBASE_KEY JSON credential).
+            try:
+                default_app = firebase_admin.get_app()
+            except ValueError:
+                default_app = None
+            if default_app is not None:
+                if default_app.project_id != config.project_id:
+                    raise FirebaseConfigurationError(
+                        f"기존 Firebase 프로젝트({default_app.project_id})와 "
+                        f"AutoMod 프로젝트({config.project_id})가 다릅니다."
+                    )
+                credential = default_app.credential
+            else:
+                credential = credentials.ApplicationDefault()
+                credential.get_credential()
         options = {"projectId": config.project_id, "httpTimeout": 30}
         if config.storage_bucket:
             options["storageBucket"] = config.storage_bucket
