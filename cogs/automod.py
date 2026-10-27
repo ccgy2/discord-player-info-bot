@@ -1,4 +1,4 @@
-"""한국어 Discord 자동관리 — 단일 Cog 배포판 2.1.0.
+"""한국어 Discord 자동관리 — 단일 Cog 배포판 2.2.0.
 
 배치: 기존 프로젝트의 cogs/automod.py 하나만 추가합니다.
 필수: Python 3.11+, discord.py 2.x, Firebase Admin, EasyOCR ko/en CPU.
@@ -10,7 +10,11 @@
     python cogs/automod.py --install-ocr-models
     python cogs/automod.py --check-ocr-models
 
-Firebase: FIREBASE_PROJECT_ID, ADC 또는 GOOGLE_APPLICATION_CREDENTIALS.
+Firebase: 기존 bot.py의 Firebase 인증(FIREBASE_KEY 포함)을 재사용합니다.
+기존 앱이 없으면 ADC 또는 GOOGLE_APPLICATION_CREDENTIALS를 사용합니다.
+2.2.0: 명백한 욕설의 단독·문장 내 사용을 표현금지로 처리하며, 신고·교육은 검토합니다.
+첫 확정 위반은 삭제·경고, 두 번째부터 저장된 고정 타임아웃. 과거 검토 기록은 소급 집계하지 않습니다.
+운영 로그는 짧게 표시하고 상세 근거와 조치 상태는 Firestore와 /위반 사건에 유지합니다.
 선택: FIREBASE_STORAGE_BUCKET, AUTOMOD_OCR_MODEL_DIR.
 기본 사전은 이 파일에 내장하며 서버별 추가·제외 설정은 Firestore에 저장합니다.
 설치 후 /자동관리 로그생성 또는 /자동관리 설정 명령으로 운영을 시작합니다.
@@ -22,7 +26,7 @@ import os
 from pathlib import Path
 import sys
 
-__version__ = "2.1.2-singlefile-diagnostics"
+__version__ = "2.2.0-singlefile-enforcement"
 _SINGLE_FILE = Path(__file__).resolve()
 ROOT = _SINGLE_FILE.parent.parent
 
@@ -48,7 +52,7 @@ RULES_PATH: Path | None = None
 _BUILTIN_RULES_JSON = r'''
 {
   "version": 1,
-  "description": "Local conservative seed dictionary. No statistical certainty; review labels never count as warnings. Bounded gap <=2; exact explicit variants only.",
+  "description": "Explicit profanity ban with scoped report/education review. Korean embedding only for selected rules; no whole-sentence stripping, initials or fuzzy matching.",
   "zero_width_characters": [
     "U+200B",
     "U+200C",
@@ -76,8 +80,8 @@ _BUILTIN_RULES_JSON = r'''
       "category": "profanity",
       "severity": "medium",
       "match_mode": "bounded",
-      "context_required": true,
-      "auto_policy": "targeted",
+      "context_required": false,
+      "auto_policy": "explicit",
       "suffixes": [
         "아",
         "야",
@@ -122,7 +126,8 @@ _BUILTIN_RULES_JSON = r'''
         "점"
       ],
       "requires_hostility": false,
-      "enabled": true
+      "enabled": true,
+      "embedded_hangul": true
     },
     {
       "id": "ko.profanity.jot",
@@ -136,8 +141,8 @@ _BUILTIN_RULES_JSON = r'''
       "category": "profanity",
       "severity": "medium",
       "match_mode": "bounded",
-      "context_required": true,
-      "auto_policy": "targeted",
+      "context_required": false,
+      "auto_policy": "explicit",
       "suffixes": [
         "아",
         "야",
@@ -181,7 +186,8 @@ _BUILTIN_RULES_JSON = r'''
         "한테"
       ],
       "requires_hostility": false,
-      "enabled": true
+      "enabled": true,
+      "embedded_hangul": true
     },
     {
       "id": "ko.profanity.jonna",
@@ -190,8 +196,8 @@ _BUILTIN_RULES_JSON = r'''
       "category": "profanity",
       "severity": "medium",
       "match_mode": "bounded",
-      "context_required": true,
-      "auto_policy": "review_only",
+      "context_required": false,
+      "auto_policy": "explicit",
       "suffixes": [
         "아",
         "야",
@@ -235,7 +241,8 @@ _BUILTIN_RULES_JSON = r'''
         "한테"
       ],
       "requires_hostility": false,
-      "enabled": true
+      "enabled": true,
+      "embedded_hangul": true
     },
     {
       "id": "ko.profanity.jiral",
@@ -248,8 +255,8 @@ _BUILTIN_RULES_JSON = r'''
       "category": "profanity",
       "severity": "medium",
       "match_mode": "bounded",
-      "context_required": true,
-      "auto_policy": "targeted",
+      "context_required": false,
+      "auto_policy": "explicit",
       "suffixes": [
         "아",
         "야",
@@ -293,7 +300,8 @@ _BUILTIN_RULES_JSON = r'''
         "한테"
       ],
       "requires_hostility": false,
-      "enabled": true
+      "enabled": true,
+      "embedded_hangul": true
     },
     {
       "id": "ko.profanity.gaesaekki",
@@ -302,8 +310,8 @@ _BUILTIN_RULES_JSON = r'''
       "category": "profanity",
       "severity": "high",
       "match_mode": "bounded",
-      "context_required": true,
-      "auto_policy": "targeted",
+      "context_required": false,
+      "auto_policy": "explicit",
       "suffixes": [
         "아",
         "야",
@@ -347,7 +355,8 @@ _BUILTIN_RULES_JSON = r'''
         "한테"
       ],
       "requires_hostility": false,
-      "enabled": true
+      "enabled": true,
+      "embedded_hangul": true
     },
     {
       "id": "ko.profanity.gaesori",
@@ -359,8 +368,8 @@ _BUILTIN_RULES_JSON = r'''
       "category": "profanity",
       "severity": "medium",
       "match_mode": "bounded",
-      "context_required": true,
-      "auto_policy": "targeted",
+      "context_required": false,
+      "auto_policy": "explicit",
       "suffixes": [
         "아",
         "야",
@@ -404,7 +413,8 @@ _BUILTIN_RULES_JSON = r'''
         "한테"
       ],
       "requires_hostility": false,
-      "enabled": true
+      "enabled": true,
+      "embedded_hangul": true
     },
     {
       "id": "ko.profanity.michin",
@@ -415,8 +425,8 @@ _BUILTIN_RULES_JSON = r'''
       "category": "profanity",
       "severity": "high",
       "match_mode": "bounded",
-      "context_required": true,
-      "auto_policy": "targeted",
+      "context_required": false,
+      "auto_policy": "explicit",
       "suffixes": [
         "아",
         "야",
@@ -460,7 +470,8 @@ _BUILTIN_RULES_JSON = r'''
         "한테"
       ],
       "requires_hostility": false,
-      "enabled": true
+      "enabled": true,
+      "embedded_hangul": true
     },
     {
       "id": "ko.shorthand",
@@ -492,8 +503,8 @@ _BUILTIN_RULES_JSON = r'''
       "category": "insult",
       "severity": "high",
       "match_mode": "bounded",
-      "context_required": true,
-      "auto_policy": "targeted",
+      "context_required": false,
+      "auto_policy": "explicit",
       "suffixes": [
         "아",
         "야",
@@ -537,7 +548,8 @@ _BUILTIN_RULES_JSON = r'''
         "한테"
       ],
       "requires_hostility": false,
-      "enabled": true
+      "enabled": true,
+      "embedded_hangul": true
     },
     {
       "id": "ko.insult.deungsin",
@@ -763,7 +775,8 @@ _BUILTIN_RULES_JSON = r'''
         "한테"
       ],
       "requires_hostility": false,
-      "enabled": true
+      "enabled": true,
+      "embedded_hangul": true
     },
     {
       "id": "ko.sexual.demand",
@@ -1400,8 +1413,8 @@ _BUILTIN_RULES_JSON = r'''
       "category": "english",
       "severity": "medium",
       "match_mode": "token",
-      "context_required": true,
-      "auto_policy": "targeted",
+      "context_required": false,
+      "auto_policy": "explicit",
       "suffixes": [],
       "requires_hostility": false,
       "enabled": true
@@ -1413,8 +1426,8 @@ _BUILTIN_RULES_JSON = r'''
       "category": "english",
       "severity": "medium",
       "match_mode": "token",
-      "context_required": true,
-      "auto_policy": "review_only",
+      "context_required": false,
+      "auto_policy": "explicit",
       "suffixes": [],
       "requires_hostility": false,
       "enabled": true
@@ -1429,8 +1442,8 @@ _BUILTIN_RULES_JSON = r'''
       "category": "english",
       "severity": "high",
       "match_mode": "token",
-      "context_required": true,
-      "auto_policy": "targeted",
+      "context_required": false,
+      "auto_policy": "explicit",
       "suffixes": [],
       "requires_hostility": false,
       "enabled": true
@@ -1442,8 +1455,8 @@ _BUILTIN_RULES_JSON = r'''
       "category": "english",
       "severity": "medium",
       "match_mode": "token",
-      "context_required": true,
-      "auto_policy": "targeted",
+      "context_required": false,
+      "auto_policy": "explicit",
       "suffixes": [],
       "requires_hostility": false,
       "enabled": true
@@ -1487,7 +1500,7 @@ def _rules_data(path: str | Path | None = None) -> dict:
 # engine
 # ===========================================================================
 
-"""Conservative, offline moderation rules, independent of Discord and SQLite.
+"""Offline moderation rules with explicit profanity bans, independent of Discord and Firestore.
 
 Rule schema: id/expression/variants/category/severity/match_mode,
 context_required/auto_policy/suffixes/requires_hostility/enabled.  Only escaped
@@ -1689,10 +1702,14 @@ def _validate_rule(rule: Mapping) -> dict:
         raise ValueError(f"심각도가 잘못되었습니다: {rule['id']}")
     if rule.get("match_mode") not in {"token", "bounded", "literal"}:
         raise ValueError(f"일치방식이 잘못되었습니다: {rule['id']}")
-    if rule.get("auto_policy") not in {"targeted", "review_only", "intrinsic"}:
+    if rule.get("auto_policy") not in {"targeted", "review_only", "intrinsic", "explicit"}:
         raise ValueError(f"판단 정책이 잘못되었습니다: {rule['id']}")
     if not isinstance(rule.get("context_required"), bool):
         raise ValueError("context_required는 bool이어야 합니다.")
+    if not isinstance(rule.get("embedded_hangul", False), bool):
+        raise ValueError("embedded_hangul은 bool이어야 합니다.")
+    if rule.get("embedded_hangul") and rule.get("match_mode") != "bounded":
+        raise ValueError("한글 붙여쓰기 검사는 제한우회 규칙에만 사용할 수 있습니다.")
     variants = rule.get("variants", [])
     suffixes = rule.get("suffixes", [])
     if not isinstance(variants, list) or len(variants) > 40 or not isinstance(suffixes, list) or len(suffixes) > 64:
@@ -1776,6 +1793,13 @@ class Engine:
     def _boundary_ok(text: str, start: int, end: int, rule: Mapping) -> bool:
         if rule["match_mode"] == "literal":
             return True
+        if rule.get("embedded_hangul", False):
+            # Only explicitly selected Korean swear expressions may occur inside
+            # joined Korean text. ASCII aliases keep word boundaries. _original_span
+            # already rejects partial matches inside a syllable (e.g. ㅄ in 값).
+            matched_atoms = _normalize(text[start:end]).text
+            if any("ㄱ" <= c <= "ㅣ" for c in matched_atoms) and not re.search(r"[a-z]", matched_atoms):
+                return True
         before = text[start - 1] if start else ""
         after = text[end] if end < len(text) else ""
         if _word_char(before):
@@ -1847,6 +1871,26 @@ class Engine:
                         continue
                 containing_quote = next(((a, b) for a, b in quoted if a <= start and end <= b), None)
                 education = bool(_EDUCATION.search(clause))
+                educational_tail = _context_normalize(text[end:min(right, end + 80)])
+                education = education or bool(re.match(
+                    r"[\"'’”`]*(?:(?:이?라는|라는)\s*(?:말|표현|단어)\s*|(?:은|는|란)\s*)"
+                    r"(?:욕설|비속어|금칙어|모욕\s*표현|혐오\s*표현)(?:입니다|이다|에요|예요|인가|이니|이므로|라서|이야|이다|에\s*해당)",
+                    educational_tail,
+                ))
+                # Evidence about *this matched expression*, not a global bypass
+                # for any message containing quotes or the word 신고합니다.
+                education = education or bool(re.match(
+                    r"[ \t\"'’”`]*(?:은|는|이|가|란)?\s*(?:무슨|어떤)?\s*"
+                    r"(?:뜻|의미)(?:이|인|야|예|에|가|를|는|입|\s|$)", educational_tail,
+                ))
+                education = education or bool(re.match(
+                    r"[ \t\"'’”`]*(?:이?라고|라는|이라는)\s*(?:(?:말|표현|단어)(?:을|를)?\s*)?"
+                    r"(?:쓰면|말하면|사용하면|부르면)\s*안", educational_tail,
+                ))
+                education = education or bool(re.match(
+                    r"[ \t\"'’”`]*(?:(?:이?라는)\s*(?:단어|표현|말)(?:을|를)?|(?:을|를))\s*"
+                    r"(?:금칙어|필터|규칙|사전)(?:에|로)?\s*(?:등록|추가|설정|넣)", educational_tail,
+                ))
                 attribution = bool(_ATTRIBUTION.search(clause))
                 report = bool(_REPORT_GOAL.search(clause) and attribution)
                 # Reported speech includes a concrete reporting verb, not merely
@@ -1867,13 +1911,25 @@ class Engine:
                     education = education or bool(_EDUCATION.search(surrounding))
                 confidence = "review"
                 reasons = ["등록된 표현과 제한된 변형이 일치"]
-                negation = bool(_NEGATION.search(_context_normalize(text[end:min(right, end + 45)])))
+                negation_tail = _context_normalize(text[end:min(right, end + 45)])
+                negation = bool(_NEGATION.search(negation_tail))
+                if rule["auto_policy"] == "explicit" and rule["category"] in {"profanity", "english"}:
+                    # A profanity intensifier followed by '아니야' is still use of
+                    # the banned expression. Negating *the quotation/use* is review.
+                    negation = bool(re.match(
+                        r"[\"'’”`]*(?:이?라고|라는|이라는)\s*(?:말(?:을)?\s*)?"
+                        r"(?:하지\s*(?:마|말)|쓰지|사용하지|말하지|부르지|하면\s*안)",
+                        negation_tail,
+                    ))
                 if education or report or negation:
                     reasons.append("인용·신고·설명 문맥의 추가 근거가 있어 자동 제재 보류")
                 elif rule["category"] == "threat" and _GAME.search(clause):
                     reasons.append("게임·캐릭터 문맥 가능성으로 관리자 검토 필요")
                 elif rule["category"] == "disability" and not hostile and _TECHNICAL.search(clause):
                     reasons.append("기술 용어·부품의 동음이의어 문맥 가능성으로 관리자 검토 필요")
+                elif rule["auto_policy"] == "explicit":
+                    confidence = "clear"
+                    reasons.append("표현금지 규칙: 공격 대상 유무와 관계없이 명시적 금칙 표현 사용")
                 elif rule["auto_policy"] == "intrinsic":
                     confidence = "clear"
                     reasons.append("표현 자체에 직접적인 모욕 대상이 포함됨")
@@ -1891,8 +1947,15 @@ class Engine:
                     reason="; ".join(reasons),
                     recommendation="enforce" if confidence == "clear" else "review",
                 ))
-        findings.sort(key=lambda f: (f.start, f.end, f.rule_id))
-        return findings
+        findings.sort(key=lambda f: (f.start, -f.end, f.rule_id))
+        kept: list[Finding] = []
+        last_end_by_rule: dict[str, int] = {}
+        for finding in findings:
+            if finding.end <= last_end_by_rule.get(finding.rule_id, -1):
+                continue
+            kept.append(finding)
+            last_end_by_rule[finding.rule_id] = finding.end
+        return sorted(kept, key=lambda f: (f.start, f.end, f.rule_id))
 
 
 
@@ -5112,6 +5175,130 @@ def duration_label(seconds: int) -> str:
     return f"{seconds // 60}분"
 
 
+def _action_field(action, key: str, default=""):
+    """Accept stored mappings and in-flight ActionResult objects without mutation."""
+    return action.get(key, default) if isinstance(action, dict) else getattr(action, key, default)
+
+
+def _compact_outcome(incident: dict, actions: dict) -> str:
+    """Summarize actual outcomes, never present the intended plan as API success."""
+    state = incident.get("state", "review")
+    if state == "canceled":
+        return "관리자가 취소함 · 이번 건 누적 제외"
+    if incident.get("imported"):
+        return "이전 기록 · 새 제재 실행 없음"
+
+    pieces = []
+    preflight = actions.get("preflight")
+    if _action_field(preflight, "status") in {"failed", "unknown"}:
+        detail = safe_text(_action_field(preflight, "detail", "권한·최신 메시지 확인 필요"), 90)
+        pieces.append("조치 보류: " + detail)
+    for kind, label in (("delete", "삭제"), ("timeout", "타임아웃")):
+        action = actions.get(kind)
+        status, code = _action_field(action, "status"), _action_field(action, "code")
+        if status == "succeeded":
+            if kind == "timeout":
+                seconds = int((incident.get("plan") or {}).get("timeout_seconds", 3600))
+                pieces.append(duration_label(seconds) + " 타임아웃 적용")
+            else:
+                pieces.append("메시지 삭제")
+        elif status == "skipped" and code == "existing_longer":
+            pieces.append("기존의 더 긴 타임아웃 유지")
+        elif code == "warning_only":
+            continue
+        elif status in {"failed", "unknown", "pending"}:
+            verdict = "실패" if status == "failed" else "결과 미확인"
+            detail = safe_text(_action_field(action, "detail", ""), 70)
+            pieces.append(f"{label} {verdict}" + (f": {detail}" if detail else ""))
+        elif status == "skipped":
+            detail = safe_text(_action_field(action, "detail", "조건 미충족"), 70)
+            pieces.append(f"{label} 보류: {detail}")
+
+    plan = incident.get("plan") or {}
+    if incident.get("count_applied") and not plan.get("should_timeout") and state == "completed":
+        dm, public = actions.get("dm"), actions.get("public")
+        delivered = any(_action_field(a, "status") == "succeeded" for a in (dm, public))
+        if delivered:
+            pieces.append("경고 안내 완료")
+        elif any(_action_field(a, "code") == "cooldown" for a in (dm, public)):
+            pieces.append("경고 기록 (알림 쿨다운)")
+        elif any(_action_field(a, "status") in {"failed", "unknown", "pending"} for a in (dm, public)):
+            pieces.append("경고 기록 (안내 실패·미확인)")
+        else:
+            pieces.append("경고 기록 (안내 미전송)")
+
+    if state == "voided":
+        pieces.append("이번 건 누적 제외")
+    if not pieces:
+        if incident.get("mode") == "observe":
+            return "관찰 기록 · 삭제·처벌 없음"
+        if state == "review":
+            return "검토만 · 삭제·처벌·횟수 증가 없음"
+        return "처리 결과 확인 필요"
+    return " · ".join(pieces)[:600]
+
+
+def compact_log_data(incident: dict, findings: list, actions: dict, current_count: int) -> dict:
+    """Short private log. Full findings/statuses remain in /위반 사건 and Firestore.
+
+    The event's ordinal comes from its immutable plan, not a count recalculated
+    during a later log retry. The stable footer is also used for idempotency/TTL.
+    """
+    state = incident.get("state", "review")
+    plan = incident.get("plan") or {}
+    ordinal = int(plan.get("count", plan.get("count_after", current_count)))
+    if state == "canceled":
+        title = f"자동관리 · 취소 (누적 {current_count}회)"
+    elif state == "voided":
+        title = f"자동관리 · 조치 보류 (누적 {current_count}회)"
+    elif state == "review" or not incident.get("count_applied"):
+        label = "관찰" if incident.get("mode") == "observe" else "검토"
+        title = f"자동관리 · {label} (누적 {current_count}회)"
+    else:
+        title = f"자동관리 · {ordinal}회째"
+
+    uid, cid = int(incident["user_id"]), int(incident["channel_id"])
+    name = safe_text(incident.get("user_name") or "기록 사용자", 80)
+    fragments = []
+    if not incident.get("evidence_purged", False):
+        for finding in findings:
+            phrase = str(_action_field(finding, "matched", ""))
+            if phrase and phrase not in fragments:
+                fragments.append(phrase)
+        if not fragments and incident.get("excerpt"):
+            fragments = [str(incident["excerpt"])]
+    phrase_text = " · ".join(safe_text(value, 100) for value in fragments[:8])
+    if len(fragments) > 8:
+        phrase_text += f" 외 {len(fragments) - 8}개"
+    if not phrase_text:
+        phrase_text = "보관 기한 만료" if incident.get("evidence_purged") else "없음 (검사 진단)"
+    sources = {_action_field(f, "source", "text") for f in findings}
+    phrase_label = "감지 표현 · 이미지 OCR" if sources == {"image"} else (
+        "감지 표현 · 글/이미지" if "image" in sources else "감지 표현"
+    )
+    stamp = incident.get("message_edited_at") or incident.get("message_created_at") or incident.get("created_at")
+    if isinstance(stamp, datetime):
+        stamp = stamp.isoformat()
+    result = {
+        "title": title, "color": 0x9C6333,
+        "fields": [
+            {"name": "사용자", "value": f"{name} (<@{uid}>)", "inline": True},
+            {"name": "채널", "value": f"<#{cid}>", "inline": True},
+            {"name": phrase_label, "value": phrase_text[:900], "inline": False},
+            {"name": "처리", "value": _compact_outcome(incident, actions), "inline": False},
+        ],
+        "footer": {"text": f"사건 ID: {incident['incident_id']}"},
+    }
+    if isinstance(stamp, str):
+        try:
+            parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                result["timestamp"] = parsed.astimezone(UTC).isoformat()
+        except ValueError:
+            pass
+    return result
+
+
 async def respond(interaction: discord.Interaction, text: str) -> None:
     kwargs: dict = {"ephemeral": True, "allowed_mentions": NO_MENTIONS}
     if len(text) > 1900:
@@ -5368,7 +5555,12 @@ class DiscordAdapter:
     @staticmethod
     def _is_case_log(message, bot_id: int, case_id: str) -> bool:
         marker = f"사건 ID: `{case_id}`"
-        return (message.author.id == bot_id and any(marker in (embed.description or "") for embed in message.embeds))
+        footer = f"사건 ID: {case_id}"
+        return (message.author.id == bot_id and any(
+            marker in (embed.description or "")
+            or getattr(embed.footer, "text", None) == footer
+            for embed in message.embeds
+        ))
 
     async def resolve_log(self, incident: dict) -> ActionResult:
         """Read only. A lost send response never causes an unverified resend."""
@@ -5399,49 +5591,8 @@ class DiscordAdapter:
             config, channel, message_id, stop = await self._log_destination(incident)
             if stop:
                 return stop
-            def field(item, key, default=""):
-                return item.get(key, default) if isinstance(item, dict) else getattr(item, key, default)
-            mode = incident.get("mode", "observe")
-            embed = discord.Embed(title=f"자동관리 사건 · {MODES.get(mode, mode)}",
-                                  colour=0x9C6333, description=f"사건 ID: `{incident['incident_id']}`",
-                                  timestamp=datetime.now(UTC))
-            name = incident.get("user_name") or "보관 만료 또는 미기록"
-            embed.add_field(name="사용자", value=f"{safe_text(name, 100)}\nID {incident['user_id']}", inline=False)
-            embed.add_field(name="발생 채널 / 메시지", value=f"{incident['channel_id']} / {incident['message_id']}", inline=False)
-            occurred = shown_time(incident.get("message_created_at") or incident.get("created_at"), config["display_timezone"])
-            if incident.get("message_edited_at"):
-                occurred += "\n수정: " + shown_time(incident["message_edited_at"], config["display_timezone"])
-            embed.add_field(name="발생 시각", value=occurred, inline=False)
-            sources = sorted({field(f, "source", "text") for f in findings})
-            embed.add_field(name="검사 종류", value=", ".join(sources) or "검사 진단 / 발췌 만료", inline=False)
-            settings = incident.get("plan") or incident.get("settings") or config
             current_count = await self.cog.store.count_violations(self.guild.id, incident["user_id"])
-            count_snapshot = settings.get("count", incident.get("count", 0))
-            status = incident.get("state", "review")
-            embed.add_field(name="횟수 / 확정 당시 정책", value=(
-                f"현재 유효 누적 {current_count}회 / 사건 확정 당시 {count_snapshot}회\n"
-                f"경고 허용 {settings.get('warning_limit', config['warning_limit'])}회 / "
-                f"고정 {duration_label(settings.get('timeout_seconds', config['timeout_seconds']))}\n"
-                f"설정 버전 {settings.get('config_version', incident.get('config_version', 0))} / 사건 상태 {status}"
-            ), inline=False)
-            details = "\n".join(f"{kind}: {field(result, 'status')} / {field(result, 'code')} / {field(result, 'detail')}" for kind, result in actions.items())
-            embed.add_field(name="실제 조치 결과", value=safe_text(details, 1024) or "기록만 수행", inline=False)
-            if not incident.get("evidence_purged", False):
-                embed.add_field(name="필요한 최소 발췌", value=safe_text(incident.get("excerpt", ""), 600) or "없음", inline=False)
-                reasons = "\n".join(f"{field(f, 'rule_id')} / {field(f, 'category')} / {field(f, 'source', 'text')} / {field(f, 'confidence')}: {field(f, 'reason')}" for f in findings[:6])
-                notes = incident.get("inspection_notes", [])
-                if notes:
-                    reasons += "\n" + ("\n".join(notes) if isinstance(notes, (list, tuple)) else str(notes))
-                embed.add_field(name="판정·검사 근거", value=safe_text(reasons, 1024) or "기술 진단", inline=False)
-            else:
-                embed.add_field(name="증거 보관", value="발췌 보관 기한 만료 · 누적 횟수와 사건 ID는 유지", inline=False)
-            embed.add_field(name="Firebase / Discord 이중 기록", value=(
-                "Firestore 사건·처벌 계획: 저장 확인\n"
-                "Discord 로그: 이 메시지로 연결됨\n"
-                "전송 응답 이후 메시지 ID·성공 결과를 Firestore에 별도 기록합니다. "
-                "후속 저장의 불확실 상태는 /자동관리 저장상태 또는 /위반 사건에서 확인하세요."
-            ), inline=False)
-            embed.set_footer(text="원본 이미지 재게시 없음 · 확정 처벌 계획을 재계산하지 않음 · OCR 점수는 정확도 확률이 아님")
+            embed = discord.Embed.from_dict(compact_log_data(incident, findings, actions, current_count))
             if message_id:
                 prior = await channel.fetch_message(message_id)
                 if not self._is_case_log(prior, self.cog.bot.user.id, incident["incident_id"]):
@@ -6182,8 +6333,10 @@ class AutoMod(commands.Cog):
             await respond(interaction, 'Firestore/처리 오류 보호 상태입니다. 새 자동 처벌을 보류했습니다. /자동관리 저장상태와 연결점검으로 확인하세요. DB 장애는 60초 간격으로 재연결합니다.')
             return
         config = await self.store.get_config(interaction.guild_id)
-        lines = [f'모드: {MODES[config["mode"]]} / 최초 설정 완료: {config["setup_complete"]}',
+        lines = [f'자동관리 버전: {__version__}',
+                 f'모드: {MODES[config["mode"]]} / 최초 설정 완료: {config["setup_complete"]}',
                  f'정책: 경고 {config["warning_limit"]}회, 이후 매번 고정 {duration_label(config["timeout_seconds"])}',
+                 '명백한 기본 욕설은 표현금지(단독·문장 내 검사). 신고·교육·애매한 표현은 검토합니다.',
                  '누적 위반은 자동 초기화하지 않습니다. 증거 만료와 누적 집계는 별개입니다.',
                  f'이미지 검사: {config["image_enabled"]} / OCR 준비: {self.ocr.ready} / 메시지 대기 {self._image_jobs.qsize()}/32',
                  f'로그 ID: {config["log_channel_id"]} / 운영 역할 ID: {config["operator_role_ids"]}',
@@ -6405,18 +6558,21 @@ class AutoMod(commands.Cog):
     @app_commands.choices(분류=CATEGORY_CHOICES)
     async def add_rule(self, interaction: discord.Interaction, 표현: app_commands.Range[str, 2, 64],
                        분류: app_commands.Choice[str], 일치방식: Literal['단어', '제한우회', '문자열'],
-                       판단: Literal['검토', '공격대상확인'] = '검토') -> None:
+                       판단: Literal['검토', '공격대상확인', '표현금지'] = '검토') -> None:
         rule = validate_custom_rule(표현, 분류.value, {'단어': 'token', '제한우회': 'bounded', '문자열': 'literal'}[일치방식])
         rule['id'] = 'custom_' + uuid.uuid4().hex[:12]
         if 판단 == '공격대상확인':
             rule['auto_policy'] = 'targeted'
+        elif 판단 == '표현금지':
+            rule['auto_policy'] = 'explicit'
+            rule['context_required'] = False
         Engine.from_file(self.rules_path, custom_rules=[rule])
         async with self.service.policy_lock(interaction.guild_id):
             rule_id = await self.store.add_rule(interaction.guild_id, rule)
             await self.store.record_admin_audit(interaction.guild_id, interaction.user.id, 'add_rule', rule_id)
             self.service.invalidate(interaction.guild_id)
         await self.audit_notice(interaction.guild, interaction.user.id, '규칙 추가', f'{rule_id} / {표현} / {판단}')
-        await respond(interaction, f'규칙 ID {rule_id}, 판단 {판단}. /필터테스트로 정상 문장도 확인하세요.')
+        await respond(interaction, f'규칙 ID {rule_id}, 판단 {판단}. 붙인 글자까지 검사하려면 일치방식:문자열을 신중히 선택하세요. /필터테스트로 정상 문장도 확인하세요.')
 
     async def _all_rules(self, guild_id: int):
         base = _rules_data(self.rules_path)['rules']
@@ -6432,7 +6588,7 @@ class AutoMod(commands.Cog):
             await self.store.record_admin_audit(interaction.guild_id, interaction.user.id, 'disable_rule' if disabled else 'restore_rule', rule_id)
             self.service.invalidate(interaction.guild_id)
         await self.audit_notice(interaction.guild, interaction.user.id, '규칙 변경', f'{rule_id}: 비활성 {disabled}')
-        await respond(interaction, f'{safe_text(rule_id)}: {"비활성화" if disabled else "복원"}. 다른 서버와 기본 JSON은 바뀌지 않습니다.')
+        await respond(interaction, f'{safe_text(rule_id)}: {"비활성화" if disabled else "복원"}. 다른 서버와 내장 기본 사전은 바뀌지 않습니다.')
 
     @banned.command(name='삭제', description='이 서버에서 기본·추가 규칙을 비활성화합니다')
     async def disable_rule(self, interaction: discord.Interaction, 규칙id: str) -> None:
@@ -6467,7 +6623,7 @@ class AutoMod(commands.Cog):
             await self.store.record_admin_audit(interaction.guild_id, interaction.user.id, 'remove_allow', 표현[:100])
             self.service.invalidate(interaction.guild_id)
         await self.audit_notice(interaction.guild, interaction.user.id, '허용어 삭제', 표현[:100])
-        await respond(interaction, '추가 허용어 삭제 완료.' if removed else '추가 허용어에 없습니다. 기본 정상 문장 보호는 JSON에서 관리합니다.')
+        await respond(interaction, '추가 허용어 삭제 완료.' if removed else '추가 허용어에 없습니다. 기본 정상 문장 보호는 내장 사전에서 관리합니다.')
 
     @allowed.command(name='목록', description='현재 기본·추가 허용어를 확인합니다')
     async def list_allow(self, interaction: discord.Interaction) -> None:
