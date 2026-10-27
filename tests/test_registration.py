@@ -19,7 +19,8 @@ TREE = ast.parse(SOURCE.read_text(encoding='utf-8'))
 NAMES = {
     'AUTOMOD_ROOT_NAMES', 'AUTOMOD_SLASH_PATCH_VERSION',
     'AutoModRegistrationError', '_slash_error', '_command_key',
-    '_command_schema', '_matches_command', 'AutoModSlashRegistrar',
+    '_command_schema', '_matches_command', '_command_differences',
+    '_normalise_command_payload', 'AutoModSlashRegistrar',
     '_automod_register_after_ready', '_automod_repair_permission',
     'automod_register_command', 'automod_registration_status_command',
     '_automod_register_joined_guild', 'load_cogs', 'setup_hook', 'on_ready',
@@ -384,7 +385,7 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('await _automod_register_after_ready', text)
 
     def test_prefix_bootstrap_commands_are_guarded(self):
-        for name in ('automod_register_command', 'automod_registration_status_command'):
+        for name in ('automod_register_command', 'automod_registration_status_command', 'automod_storage_diagnostic_command'):
             func = next(node for node in TREE.body if isinstance(node, ast.AsyncFunctionDef) and node.name == name)
             decorators = '\n'.join(ast.unparse(node) for node in func.decorator_list)
             self.assertIn('commands.guild_only()', decorators)
@@ -394,6 +395,85 @@ class Tests(unittest.IsolatedAsyncioTestCase):
     def test_no_on_message_override_or_command_redispatch(self):
         self.assertFalse(any(getattr(node, 'name', '') == 'on_message' for node in TREE.body))
         self.assertNotIn('process_commands(', SOURCE.read_text(encoding='utf-8'))
+
+
+    def channel_payload(self):
+        return {'name': '예외', 'type': 1, 'description': '검사 제외 채널과 역할',
+                'options': [{'name': '채널', 'type': 1, 'description': '예외 채널',
+                    'options': [{'name': '작업', 'type': 3, 'description': '작업', 'required': True,
+                                 'choices': [{'name': '추가', 'value': '추가'}, {'name': '삭제', 'value': '삭제'}]},
+                                {'name': '채널', 'type': 7, 'description': '대상', 'required': True,
+                                 'channel_types': [0, 5, 10, 12, 11, 15, 16]}]}]}
+
+    def test_channel_set_order_is_semantically_equal(self):
+        expected = self.channel_payload()
+        actual = copy.deepcopy(expected)
+        actual['options'][0]['options'][1]['channel_types'] = [0, 5, 10, 11, 12, 15, 16]
+        self.assertTrue(self.ns['_matches_command'](expected, actual, guild=True))
+        self.assertTrue(self.ns['_matches_command'](expected, actual, guild=False))
+
+    def test_channel_duplicates_and_enum_numbers_normalized(self):
+        expected = self.channel_payload()
+        actual = copy.deepcopy(expected)
+        actual['options'][0]['options'][1]['channel_types'] += [11, 11]
+        self.assertTrue(self.ns['_matches_command'](expected, actual, guild=True))
+
+    def test_added_channel_permission_is_still_a_mismatch(self):
+        expected = self.channel_payload()
+        actual = copy.deepcopy(expected)
+        actual['options'][0]['options'][1]['channel_types'].append(2)
+        self.assertFalse(self.ns['_matches_command'](expected, actual, guild=True))
+        diff = self.ns['_command_differences'](expected, actual, guild=True)
+        self.assertTrue(any('channel_types' in line for line in diff))
+
+    def test_parameter_order_not_silently_normalized(self):
+        expected = self.channel_payload()
+        actual = copy.deepcopy(expected)
+        actual['options'][0]['options'].reverse()
+        self.assertFalse(self.ns['_matches_command'](expected, actual, guild=True))
+
+    def test_choices_order_is_preserved(self):
+        expected = self.channel_payload()
+        actual = copy.deepcopy(expected)
+        actual['options'][0]['options'][0]['choices'].reverse()
+        self.assertFalse(self.ns['_matches_command'](expected, actual, guild=True))
+
+    def test_none_optional_constraints_equal_omission(self):
+        expected = self.channel_payload()
+        actual = copy.deepcopy(expected)
+        actual['options'][0]['options'][1].update(min_value=None, max_value=None)
+        self.assertTrue(self.ns['_matches_command'](expected, actual, guild=True))
+
+    def test_required_permission_difference_remains_visible(self):
+        expected = self.channel_payload()
+        actual = copy.deepcopy(expected)
+        actual['options'][0]['options'][1]['required'] = False
+        self.assertFalse(self.ns['_matches_command'](expected, actual, guild=True))
+        self.assertIn('required', ' '.join(self.ns['_command_differences'](expected, actual, guild=True)))
+
+    def test_payload_normalisation_has_no_side_effects(self):
+        payload = self.channel_payload()
+        before = copy.deepcopy(payload)
+        normalized = self.ns['_normalise_command_payload'](payload)
+        self.assertEqual(before, payload)
+        self.assertEqual(normalized['options'][0]['options'][1]['channel_types'], [0, 5, 10, 11, 12, 15, 16])
+        self.assertEqual(normalized['options'][0]['options'][0], payload['options'][0]['options'][0])
+
+    async def test_existing_discord_channel_sort_requires_no_repeat_upsert(self):
+        owned = next(c for c in self.bot.owned if c.name == '예외')
+        owned.payload = self.channel_payload()
+        result = await self.reg.publish(guild_id=101)
+        self.assertEqual(result['writes'], 7)
+        actual = self.bot.http.rows[101][(1, '예외')]
+        actual['options'][0]['options'][1]['channel_types'].reverse()
+        self.assertEqual((await self.reg.publish(guild_id=101))['writes'], 0)
+
+    def test_schema_diff_is_bounded_and_missing_detected(self):
+        left = self.channel_payload()
+        self.assertIn('응답에 없음', self.ns['_command_differences'](left, None, guild=True)[0])
+        right = copy.deepcopy(left)
+        right['options'] *= 10
+        self.assertLessEqual(len(self.ns['_command_differences'](left, right, guild=True)), 8)
 
 
 if __name__ == '__main__':
