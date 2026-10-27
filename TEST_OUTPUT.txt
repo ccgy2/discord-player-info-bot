@@ -1,0 +1,40 @@
+test_admin_bootstrap_permission_checked_fresh (test_registration.Tests.test_admin_bootstrap_permission_checked_fresh) ... ok
+test_concurrent_publish_is_serialized (test_registration.Tests.test_concurrent_publish_is_serialized) ... ok
+test_disabled_global_fallback_refuses (test_registration.Tests.test_disabled_global_fallback_refuses) ... ok
+test_each_guild_is_separate (test_registration.Tests.test_each_guild_is_separate) ... ok
+test_errors_never_echo_credential_like_exception_body (test_registration.Tests.test_errors_never_echo_credential_like_exception_body) ... ok
+test_existing_stale_group_updated_in_place (test_registration.Tests.test_existing_stale_group_updated_in_place) ... ok
+test_global_server_contexts_explicit (test_registration.Tests.test_global_server_contexts_explicit) ... ok
+test_global_updates_loaded_and_preserves_unloaded (test_registration.Tests.test_global_updates_loaded_and_preserves_unloaded) ... ok
+test_guild_only_updates_automod (test_registration.Tests.test_guild_only_updates_automod) ... ok
+test_guild_payload_omits_global_context_fields (test_registration.Tests.test_guild_payload_omits_global_context_fields) ... ok
+test_guild_registers_all_seven_and_verifies (test_registration.Tests.test_guild_registers_all_seven_and_verifies) ... ok
+test_inspection_read_only_even_when_cog_missing (test_registration.Tests.test_inspection_read_only_even_when_cog_missing) ... ok
+test_lost_or_unapplied_write_detected_by_requery (test_registration.Tests.test_lost_or_unapplied_write_detected_by_requery) ... ok
+test_missing_application_id_refuses (test_registration.Tests.test_missing_application_id_refuses) ... ok
+test_missing_cog_refuses_without_writes (test_registration.Tests.test_missing_cog_refuses_without_writes) ... ok
+test_missing_local_tree_repaired_from_cog (test_registration.Tests.test_missing_local_tree_repaired_from_cog) ... ok
+test_missing_required_root_refuses (test_registration.Tests.test_missing_required_root_refuses) ... ok
+test_network_error_does_not_claim_success (test_registration.Tests.test_network_error_does_not_claim_success) ... ok
+test_no_on_message_override_or_command_redispatch (test_registration.Tests.test_no_on_message_override_or_command_redispatch) ... ok
+test_non_admin_and_dm_rejected (test_registration.Tests.test_non_admin_and_dm_rejected) ... ok
+test_normalization_handles_discord_optional_defaults (test_registration.Tests.test_normalization_handles_discord_optional_defaults) ... ok
+test_one_guild_failure_does_not_block_next_guild (test_registration.Tests.test_one_guild_failure_does_not_block_next_guild) ... ok
+test_other_cog_name_conflict_not_overwritten (test_registration.Tests.test_other_cog_name_conflict_not_overwritten) ... ok
+test_other_scoped_cog_conflict_not_overwritten (test_registration.Tests.test_other_scoped_cog_conflict_not_overwritten) ... ok
+test_owner_bootstrap_permission_no_firestore (test_registration.Tests.test_owner_bootstrap_permission_no_firestore) ... ok
+test_permission_zero_is_not_treated_as_unrestricted (test_registration.Tests.test_permission_zero_is_not_treated_as_unrestricted) ... ok
+test_prefix_bootstrap_commands_are_guarded (test_registration.Tests.test_prefix_bootstrap_commands_are_guarded) ... ok
+test_remote_commands_added_mid_operation_preserved (test_registration.Tests.test_remote_commands_added_mid_operation_preserved) ... ok
+test_repeated_publish_writes_nothing (test_registration.Tests.test_repeated_publish_writes_nothing) ... ok
+test_required_diagnostic_subcommand_missing_refuses (test_registration.Tests.test_required_diagnostic_subcommand_missing_refuses) ... ok
+test_role_fetch_error_rejected (test_registration.Tests.test_role_fetch_error_rejected) ... ok
+test_setup_schedules_ready_task_without_deadlocking (test_registration.Tests.test_setup_schedules_ready_task_without_deadlocking) ... ok
+test_single_setup_hook_and_no_ready_resync (test_registration.Tests.test_single_setup_hook_and_no_ready_resync) ... ok
+test_translated_schema_is_used (test_registration.Tests.test_translated_schema_is_used) ... ok
+test_unknown_remote_guild_command_preserved (test_registration.Tests.test_unknown_remote_guild_command_preserved) ... ok
+
+----------------------------------------------------------------------
+Ran 35 tests in 0.558s
+
+OK

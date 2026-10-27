@@ -1,0 +1,7 @@
+{
+  "bot.py": "d794262189ee0972d67fb6faf75cf35d74a3e25933372083b6f7ad8f79111ff7",
+  "README_SLASH_FIX.md": "0cf30a40f6fb62295e209bdfe9061ada288393630dd5a70362ee7e3ee506a416",
+  "TEST_OUTPUT.txt": "04c9c31c0a6ec25e1680b64eb828607d613070624ca044eece339f8f2ee8dcdd",
+  "tests/test_registration.py": "a4064006dbb57c0beaf97cb2085fe7d8bc02650546814c23569b06622217fae1",
+  "bot_registration_changes.diff": "59605874175744220c4009f529eb5041cd2ca8f88ac92baece17fb57a71e9438"
+}

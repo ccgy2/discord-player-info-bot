@@ -1,0 +1,419 @@
+--- bot.py (before)
++++ bot.py (registration fix)
+@@ -1,7 +1,7 @@
+ # bot.py
+ """
+ Discord + Firebase (Firestore) Baseball Player Manager Bot
+-- Python 3.8+
++- Python 3.11+ (AutoMod Cog)
+ - discord.py based commands
+ - Firestore collections: players, teams, records, aliases
+ - Features included:
+@@ -40,6 +40,8 @@
+ # ---------- 설정 ----------
+ BOT_PREFIX = os.getenv("BOT_PREFIX", "!")
+ INTENTS = discord.Intents.default()
++INTENTS.guilds = True
++INTENTS.guild_messages = True
+ INTENTS.message_content = True
+ INTENTS.members = True
+ 
+@@ -57,9 +59,13 @@
+ 
+ # ---------- Firebase 초기화 ----------
+ def init_firebase():
+-    # 이미 초기화 되어 있으면 기존 client 반환
+-    if firebase_admin._apps:
+-        return firestore.client()
++    # 이름 있는 AutoMod 앱의 존재와 기본 앱의 존재를 구분합니다.
++    try:
++        default_app = firebase_admin.get_app()
++    except ValueError:
++        default_app = None
++    if default_app is not None:
++        return firestore.client(app=default_app)
+ 
+     cred_json = os.getenv("FIREBASE_KEY")
+     ga_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+@@ -1547,31 +1553,351 @@
+         await ctx.send(f"❌ 실패: {e}")
+ 
+ # =========================
+-# COG 자동 로드 함수
++# AutoMod 명령 등록/검증 (Firestore·OCR와 독립)
++# =========================
++AUTOMOD_ROOT_NAMES = (
++    "자동관리", "금칙어", "허용어", "예외", "위반", "필터테스트", "이미지테스트",
++)
++AUTOMOD_SLASH_PATCH_VERSION = "2026-10-27.registration-1"
++
++
++class AutoModRegistrationError(RuntimeError):
++    pass
++
++
++def _slash_error(error):
++    """토큰, 인증 JSON, HTTP 원문을 출력하지 않는 진단."""
++    cause = getattr(error, "original", error)
++    status = getattr(cause, "status", None)
++    code = getattr(cause, "code", None)
++    if isinstance(cause, AutoModRegistrationError):
++        return str(cause)
++    return f"{type(cause).__name__} (HTTP={status}, Discord code={code})"
++
++
++def _command_key(payload):
++    return int(payload.get("type", 1)), payload["name"]
++
++
++def _command_schema(payload, *, guild):
++    """Discord 응답의 ID/버전과 생략 가능한 기본값을 제외한 명령 스키마."""
++    def option(item):
++        out = {key: value for key, value in item.items()
++               if key not in {"options", "choices", "name_localizations", "description_localizations"}}
++        out["required"] = bool(out.get("required", False))
++        out["autocomplete"] = bool(out.get("autocomplete", False))
++        out["options"] = [option(child) for child in item.get("options", [])]
++        out["choices"] = [{**choice, "name_localizations": choice.get("name_localizations") or {}}
++                          for choice in item.get("choices", [])]
++        out["name_localizations"] = item.get("name_localizations") or {}
++        out["description_localizations"] = item.get("description_localizations") or {}
++        if not out.get("channel_types"):
++            out.pop("channel_types", None)
++        return out
++
++    result = {
++        "type": int(payload.get("type", 1)), "name": payload["name"],
++        "description": payload.get("description") or "",
++        "options": [option(item) for item in payload.get("options", [])],
++        "name_localizations": payload.get("name_localizations") or {},
++        "description_localizations": payload.get("description_localizations") or {},
++        "default_member_permissions": (str(payload["default_member_permissions"])
++                                       if payload.get("default_member_permissions") is not None else None),
++        "nsfw": bool(payload.get("nsfw", False)),
++    }
++    # Global-only fields: compare explicit restrictions without assuming a
++    # guild permission grant. Guild endpoints do not accept these fields.
++    if not guild:
++        if payload.get("contexts") is not None:
++            result["contexts"] = sorted(payload["contexts"])
++        if payload.get("integration_types") is not None:
++            result["integration_types"] = sorted(payload["integration_types"])
++    return result
++
++
++def _matches_command(expected, actual, *, guild):
++    if actual is None:
++        return False
++    left = _command_schema(expected, guild=guild)
++    right = _command_schema(actual, guild=guild)
++    # For non-AutoMod global commands, preserve application-level defaults
++    # when the local definition does not explicitly constrain them.
++    for key in ("contexts", "integration_types"):
++        if key not in left:
++            right.pop(key, None)
++    return left == right
++
++
++class AutoModSlashRegistrar:
++    """Non-destructive command deployment using Discord's documented POST upsert.
++
++    Reuses discord.py's HTTP transport (auth/rate limits) and command serializer.
++    No PUT bulk overwrite, DELETE, clear_commands, or DB/OCR calls are used.
++    Guild AutoMod commands dispatch through CommandTree.fallback_to_global;
++    no extra alias is retained after a Cog is unloaded.
++    """
++    def __init__(self, client):
++        self.bot = client
++        self.lock = asyncio.Lock()
++        self.last_results = {}
++
++    def automod_commands(self):
++        cog = self.bot.get_cog("AutoMod")
++        if cog is None:
++            raise AutoModRegistrationError("AutoMod Cog 미등록: 먼저 automod.py 로드 실패 로그를 확인하세요.")
++        owned = {command.name: command for command in cog.get_app_commands()}
++        missing = [name for name in AUTOMOD_ROOT_NAMES if name not in owned]
++        if missing:
++            raise AutoModRegistrationError("AutoMod 명령 정의 누락: " + ", ".join(missing))
++        result = []
++        for name in AUTOMOD_ROOT_NAMES:
++            command = owned[name]
++            current = self.bot.tree.get_command(name)
++            if current is None:
++                # Safe repair of this Cog's missing LOCAL registration only.
++                self.bot.tree.add_command(command)
++            elif current is not command:
++                raise AutoModRegistrationError(f"/{name} 이름을 다른 로컬 명령이 사용 중입니다. 덮어쓰지 않았습니다.")
++            result.append(command)
++        return result
++
++    async def _payload(self, command, *, guild):
++        translator = self.bot.tree.translator
++        if translator is None:
++            payload = command.to_dict(self.bot.tree)
++        else:
++            payload = await command.get_translated_payload(self.bot.tree, translator)
++        payload = dict(payload)
++        if guild:
++            for key in ("dm_permission", "contexts", "integration_types"):
++                payload.pop(key, None)
++        elif command.name in AUTOMOD_ROOT_NAMES:
++            # AutoMod is a server-installed app command, never a user/DM tool.
++            payload.pop("dm_permission", None)
++            payload["contexts"] = [0]
++            payload["integration_types"] = [0]
++        return payload
++
++    async def _api(self, method, *, guild_id=None, payload=None):
++        app_id = self.bot.application_id
++        if app_id is None:
++            raise AutoModRegistrationError("Discord application_id가 없습니다. 봇 로그인 이후 실행하세요.")
++        params = {"application_id": int(app_id)}
++        path = "/applications/{application_id}/commands"
++        if guild_id is not None:
++            params["guild_id"] = int(guild_id)
++            path = "/applications/{application_id}/guilds/{guild_id}/commands"
++        # Internal transport only; endpoint/body follow the official Discord API.
++        from discord.http import Route
++        route = Route(method, path, **params)
++        if payload is None:
++            return await self.bot.http.request(route)
++        return await self.bot.http.request(route, json=payload)
++
++    async def publish(self, *, guild_id=None):
++        """Global: all loaded commands. Guild: only seven AutoMod roots."""
++        async with self.lock:
++            automod = self.automod_commands()
++            guild = guild_id is not None
++            if guild:
++                if not self.bot.tree.fallback_to_global:
++                    raise AutoModRegistrationError("CommandTree.fallback_to_global=True가 필요합니다.")
++                target = discord.Object(id=int(guild_id))
++                for command in automod:
++                    scoped = self.bot.tree.get_command(command.name, guild=target)
++                    if scoped is not None and scoped is not command:
++                        raise AutoModRegistrationError(
++                            f"이 서버의 /{command.name} 로컬 명령이 다른 Cog와 충돌합니다. 덮어쓰지 않았습니다.")
++                selected = automod
++            else:
++                selected = list(self.bot.tree.get_commands())
++            desired = [await self._payload(command, guild=guild) for command in selected]
++            if not desired:
++                raise AutoModRegistrationError("명령 트리가 비어 있어 등록하지 않았습니다.")
++            control = next((p for p in desired if p["name"] == "자동관리"), None)
++            children = {option["name"] for option in (control or {}).get("options", [])}
++            if not {"연결점검", "저장상태", "상태"} <= children:
++                raise AutoModRegistrationError("/자동관리 하위 진단 명령이 누락되어 등록을 중단했습니다.")
++            before = await self._api("GET", guild_id=guild_id)
++            known = {_command_key(item): item for item in before}
++            writes = 0
++            for payload in desired:
++                if _matches_command(payload, known.get(_command_key(payload)), guild=guild):
++                    continue
++                # Upsert one command only; unknown remote commands remain intact.
++                await self._api("POST", guild_id=guild_id, payload=payload)
++                writes += 1
++            after = await self._api("GET", guild_id=guild_id)
++            registered = {_command_key(item): item for item in after}
++            mismatch = [p["name"] for p in desired
++                        if not _matches_command(p, registered.get(_command_key(p)), guild=guild)]
++            if mismatch:
++                raise AutoModRegistrationError("Discord 재조회 스키마 불일치: " + ", ".join(mismatch))
++            verified = {name: str(registered[(1, name)]["id"]) for name in AUTOMOD_ROOT_NAMES}
++            result = {"application_id": self.bot.application_id, "guild_id": guild_id,
++                      "verified": verified, "writes": writes, "checked": len(desired)}
++            self.last_results[guild_id] = result
++            label = f"guild={guild_id}" if guild else "global"
++            print(f"[AutoMod 등록확인] {label} app={self.bot.application_id} "
++                  f"자동관리 7/7 · 서버 재조회 검증 완료 · 변경 {writes}개", flush=True)
++            print("[AutoMod 명령ID] " + json.dumps(verified, ensure_ascii=False), flush=True)
++            return result
++
++    async def inspect(self, guild_id):
++        """Read-only remote registration check; no Firebase access or punishment."""
++        cog = self.bot.get_cog("AutoMod")
++        local = {command.name for command in self.bot.tree.get_commands()}
++        result = {"application_id": self.bot.application_id, "guild_id": guild_id,
++                  "cog_loaded": cog is not None,
++                  "local_roots": [name for name in AUTOMOD_ROOT_NAMES if name in local]}
++        for label, target in (("global", None), ("guild", guild_id)):
++            try:
++                rows = await self._api("GET", guild_id=target)
++                result[label] = {
++                    item["name"]: {"id": str(item["id"]), "children": [v["name"] for v in item.get("options", [])],
++                                   "default_member_permissions": item.get("default_member_permissions")}
++                    for item in rows if item.get("type", 1) == 1 and item["name"] in AUTOMOD_ROOT_NAMES
++                }
++            except Exception as exc:
++                result[label] = {"error": _slash_error(exc)}
++        return result
++
++
++_automod_registrar = AutoModSlashRegistrar(bot)
++_automod_registration_task = None
++
++
++async def _automod_register_after_ready():
++    # Never await wait_until_ready() directly inside setup_hook: Gateway has
++    # not connected yet. This single tracked task is created by setup_hook.
++    await bot.wait_until_ready()
++    try:
++        await asyncio.wait_for(_automod_registrar.publish(), timeout=180)
++    except Exception as exc:
++        print("[AutoMod 전역등록 실패] " + _slash_error(exc), flush=True)
++    for guild in tuple(bot.guilds):
++        try:
++            await asyncio.wait_for(_automod_registrar.publish(guild_id=guild.id), timeout=120)
++        except Exception as exc:
++            print(f"[AutoMod 서버등록 실패] guild={guild.id} " + _slash_error(exc), flush=True)
++    print(f"[AutoMod 등록작업 종료] 목록 미표시 시 서버 관리자: {BOT_PREFIX}자동관리점검", flush=True)
++
++
++async def _automod_repair_permission(ctx):
++    if ctx.guild is None:
++        return False
++    if ctx.author.id == ctx.guild.owner_id:
++        return True
++    try:
++        member = await ctx.guild.fetch_member(ctx.author.id)
++        roles = {role.id: role for role in await ctx.guild.fetch_roles()}
++        return any(roles[role.id].permissions.administrator for role in member.roles if role.id in roles)
++    except discord.HTTPException:
++        return False
++
++
++@bot.command(name="자동관리등록")
++@commands.guild_only()
++@commands.check(_automod_repair_permission)
++@commands.cooldown(1, 60, commands.BucketType.guild)
++async def automod_register_command(ctx):
++    """슬래시 목록이 없어도 서버 소유자/Administrator가 현재 서버를 복구."""
++    await ctx.send("현재 서버의 자동관리 명령을 등록·재조회합니다. 위반 횟수와 처벌은 변경하지 않습니다.",
++                   allowed_mentions=discord.AllowedMentions.none())
++    try:
++        result = await asyncio.wait_for(_automod_registrar.publish(guild_id=ctx.guild.id), timeout=120)
++        message = (f"자동관리 명령 7/7 등록 확인. 변경 {result['writes']}개.\n"
++                   f"앱 ID: {result['application_id']} / 서버 ID: {ctx.guild.id}\n"
++                   "Discord 명령 목록에서 /자동관리 연결점검을 선택하세요.\n"
++                   "계속 안 보이면 서버 설정 → 연동의 명령 권한과 채널의 애플리케이션 명령어 사용 권한을 확인하세요.")
++    except Exception as exc:
++        message = "등록 완료를 확인하지 못했습니다: " + _slash_error(exc)
++        print("[AutoMod 수동등록 실패] " + _slash_error(exc), flush=True)
++    await ctx.send(message, allowed_mentions=discord.AllowedMentions.none())
++
++
++@bot.command(name="자동관리점검")
++@commands.guild_only()
++@commands.check(_automod_repair_permission)
++@commands.cooldown(1, 20, commands.BucketType.guild)
++async def automod_registration_status_command(ctx):
++    try:
++        result = await asyncio.wait_for(_automod_registrar.inspect(ctx.guild.id), timeout=60)
++        permissions = ctx.channel.permissions_for(ctx.author)
++        text = (f"명령 등록 점검 ({AUTOMOD_SLASH_PATCH_VERSION})\n"
++                f"앱 ID {bot.application_id} / 서버 ID {ctx.guild.id}\n"
++                f"이 채널의 본인 애플리케이션 명령어 사용 권한: {permissions.use_application_commands}\n"
++                "아래는 Discord 등록 정보이며 Firebase/OCR 정상 여부가 아닙니다.\n"
++                + json.dumps(result, ensure_ascii=False, indent=2))
++        if len(text) <= 1900:
++            await ctx.send(text, allowed_mentions=discord.AllowedMentions.none())
++        else:
++            import io
++            await ctx.send("등록 점검 결과입니다. 인증 키·원문·위반 기록은 포함하지 않습니다.",
++                           file=discord.File(io.BytesIO(text.encode("utf-8")), filename="automod-registration-status.txt"),
++                           allowed_mentions=discord.AllowedMentions.none())
++    except Exception as exc:
++        await ctx.send("등록 점검 실패: " + _slash_error(exc), allowed_mentions=discord.AllowedMentions.none())
++
++
++async def _automod_register_joined_guild(guild):
++    if _automod_registration_task is not None and not _automod_registration_task.done():
++        # Serialize with startup so repeated creates are not submitted together.
++        await asyncio.shield(_automod_registration_task)
++    try:
++        await asyncio.wait_for(_automod_registrar.publish(guild_id=guild.id), timeout=120)
++    except Exception as exc:
++        print(f"[AutoMod 새 서버 등록 실패] guild={guild.id} " + _slash_error(exc), flush=True)
++
++
++bot.add_listener(_automod_register_joined_guild, "on_guild_join")
++
++
++# =========================
++# COG 자동 로드: 실행 위치 독립, 중복 방지, 파일별 오류 격리
+ # =========================
+ async def load_cogs():
+-    for filename in os.listdir("./cogs"):
+-        if filename.endswith(".py"):
+-            try:
+-                await bot.load_extension(f"cogs.{filename[:-3]}")
+-                print(f"✅ 성공적으로 로드됨: {filename}")
+-            except discord.ext.commands.errors.ExtensionAlreadyLoaded:
+-                pass
+-            except Exception as e:
+-                print(f"❌ {filename} 로드 실패: {e}")
++    from pathlib import Path
++    directory = Path(__file__).resolve().parent / "cogs"
++    if not directory.is_dir():
++        print("❌ cogs 폴더를 찾을 수 없습니다.", flush=True)
++        return
++    paths = [path for path in directory.glob("*.py") if not path.name.startswith("_")]
++    for path in sorted(paths, key=lambda item: (item.stem == "automod", item.name.lower())):
++        extension = f"cogs.{path.stem}"
++        if extension in bot.extensions:
++            continue
++        try:
++            await bot.load_extension(extension)
++            print(f"✅ 성공적으로 로드됨: {path.name}", flush=True)
++        except Exception as exc:
++            print(f"❌ {path.name} 로드 실패: {_slash_error(exc)}", flush=True)
++
+ 
+ # ---------- 디스코드 기본 이벤트 ----------
+ @bot.event
+ async def setup_hook():
+-    print("🔄 [setup_hook] Firebase 초기화 및 Cog 로딩 시작...")
+-    init_firebase()
++    global db, _automod_registration_task
++    print(f"[AutoMod 패치] {AUTOMOD_SLASH_PATCH_VERSION}", flush=True)
++    if db is None:
++        try:
++            db = await asyncio.to_thread(init_firebase)
++        except Exception as exc:
++            # Keep registration diagnostics alive; AutoMod never bypasses its
++            # own Firebase/canonical-counter guards on authentication failure.
++            print("Firebase 초기화 실패: " + _slash_error(exc), flush=True)
+     await load_cogs()
+-    await bot.tree.sync()
+-    print("✅ Firebase, Cog 로딩 및 슬래시 명령 동기화 완료")
++    if _automod_registration_task is None:
++        _automod_registration_task = asyncio.create_task(
++            _automod_register_after_ready(), name="automod-register-once")
++    print("✅ Cog 로딩 종료. 명령 등록 여부는 [AutoMod 등록확인] 로그로 확인하세요.", flush=True)
++
+ 
+ @bot.event
+ async def on_ready():
+-    print(f"✅ 봇 로그인 완료: {bot.user}")
++    # No extension loading or command registration on Gateway reconnect.
++    print(f"✅ 봇 로그인 완료: {bot.user} / application_id={bot.application_id}")
++
+ 
+ # ---------- 에러 처리 ----------
+ @bot.event
+@@ -1580,6 +1906,14 @@
+         await ctx.send("인자가 부족합니다. `!도움` 으로 사용법을 확인하세요.")
+     elif isinstance(error, commands.CommandNotFound):
+         return
++    elif (ctx.command is not None and ctx.command.name in {"자동관리등록", "자동관리점검"}
++          and isinstance(error, commands.CheckFailure)):
++        await ctx.send("이 명령은 서버 소유자 또는 Administrator만 실행할 수 있습니다.",
++                       allowed_mentions=discord.AllowedMentions.none())
++    elif (ctx.command is not None and ctx.command.name in {"자동관리등록", "자동관리점검"}
++          and isinstance(error, commands.CommandOnCooldown)):
++        await ctx.send(f"명령 재실행까지 {error.retry_after:.0f}초가 남았습니다.",
++                       allowed_mentions=discord.AllowedMentions.none())
+     else:
+         await ctx.send(f"명령 실행 중 오류가 발생했습니다: `{error}`")
+         print("Unhandled command error:", error)
