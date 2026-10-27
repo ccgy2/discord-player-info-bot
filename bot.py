@@ -60,6 +60,7 @@ async def setup_hook():
     await bot.load_extension("cogs.warn_system")
     await bot.load_extension("cogs.vote_check")
     await bot.load_extension("cogs.records_roster")
+    await bot.load_extension("cogs.automod")
 
 bot.setup_hook = setup_hook
 
