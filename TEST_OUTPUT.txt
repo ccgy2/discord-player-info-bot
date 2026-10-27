@@ -1,8 +1,28 @@
+test_after_repair_reads_clear_only_diagnostic_state (test_diagnostics.DiagnosticTests.test_after_repair_reads_clear_only_diagnostic_state) ... ok
+test_all_missing_indexes_reported_not_just_first (test_diagnostics.DiagnosticTests.test_all_missing_indexes_reported_not_just_first) ... ok
+test_all_query_checks_are_reads_and_do_not_return_member_data (test_diagnostics.DiagnosticTests.test_all_query_checks_are_reads_and_do_not_return_member_data) ... ok
+test_auth_failure_stops_queries_and_keeps_sanctions_disabled (test_diagnostics.DiagnosticTests.test_auth_failure_stops_queries_and_keeps_sanctions_disabled) ... ok
+test_diagnostic_url_rejects_foreign_host_and_extra_secrets (test_diagnostics.DiagnosticTests.test_diagnostic_url_rejects_foreign_host_and_extra_secrets) ... ok
+test_missing_index_classification_and_safe_url (test_diagnostics.DiagnosticTests.test_missing_index_classification_and_safe_url) ... ok
+test_model_missing_detection_precedes_engine_import (test_diagnostics.DiagnosticTests.test_model_missing_detection_precedes_engine_import) ... ok
+test_network_error_does_not_become_missing_index (test_diagnostics.DiagnosticTests.test_network_error_does_not_become_missing_index) ... ok
+test_original_punishment_defaults_preserved (test_diagnostics.DiagnosticTests.test_original_punishment_defaults_preserved) ... ok
+test_permission_error_does_not_print_raw_secrets (test_diagnostics.DiagnosticTests.test_permission_error_does_not_print_raw_secrets) ... ok
+test_precondition_without_index_not_mislabelled (test_diagnostics.DiagnosticTests.test_precondition_without_index_not_mislabelled) ... ok
+test_probe_success_does_not_hide_composite_query_failure (test_diagnostics.DiagnosticTests.test_probe_success_does_not_hide_composite_query_failure) ... ok
+test_query_failure_records_operation_before_wrapping (test_diagnostics.DiagnosticTests.test_query_failure_records_operation_before_wrapping) ... ok
+test_refresh_error_is_authentication (test_diagnostics.DiagnosticTests.test_refresh_error_is_authentication) ... ok
+test_wrapper_and_grpc_cause_preserve_meaningful_status (test_diagnostics.DiagnosticTests.test_wrapper_and_grpc_cause_preserve_meaningful_status) ... ok
+test_added_channel_permission_is_still_a_mismatch (test_registration.Tests.test_added_channel_permission_is_still_a_mismatch) ... ok
 test_admin_bootstrap_permission_checked_fresh (test_registration.Tests.test_admin_bootstrap_permission_checked_fresh) ... ok
+test_channel_duplicates_and_enum_numbers_normalized (test_registration.Tests.test_channel_duplicates_and_enum_numbers_normalized) ... ok
+test_channel_set_order_is_semantically_equal (test_registration.Tests.test_channel_set_order_is_semantically_equal) ... ok
+test_choices_order_is_preserved (test_registration.Tests.test_choices_order_is_preserved) ... ok
 test_concurrent_publish_is_serialized (test_registration.Tests.test_concurrent_publish_is_serialized) ... ok
 test_disabled_global_fallback_refuses (test_registration.Tests.test_disabled_global_fallback_refuses) ... ok
 test_each_guild_is_separate (test_registration.Tests.test_each_guild_is_separate) ... ok
 test_errors_never_echo_credential_like_exception_body (test_registration.Tests.test_errors_never_echo_credential_like_exception_body) ... ok
+test_existing_discord_channel_sort_requires_no_repeat_upsert (test_registration.Tests.test_existing_discord_channel_sort_requires_no_repeat_upsert) ... ok
 test_existing_stale_group_updated_in_place (test_registration.Tests.test_existing_stale_group_updated_in_place) ... ok
 test_global_server_contexts_explicit (test_registration.Tests.test_global_server_contexts_explicit) ... ok
 test_global_updates_loaded_and_preserves_unloaded (test_registration.Tests.test_global_updates_loaded_and_preserves_unloaded) ... ok
@@ -18,23 +38,60 @@ test_missing_required_root_refuses (test_registration.Tests.test_missing_require
 test_network_error_does_not_claim_success (test_registration.Tests.test_network_error_does_not_claim_success) ... ok
 test_no_on_message_override_or_command_redispatch (test_registration.Tests.test_no_on_message_override_or_command_redispatch) ... ok
 test_non_admin_and_dm_rejected (test_registration.Tests.test_non_admin_and_dm_rejected) ... ok
+test_none_optional_constraints_equal_omission (test_registration.Tests.test_none_optional_constraints_equal_omission) ... ok
 test_normalization_handles_discord_optional_defaults (test_registration.Tests.test_normalization_handles_discord_optional_defaults) ... ok
 test_one_guild_failure_does_not_block_next_guild (test_registration.Tests.test_one_guild_failure_does_not_block_next_guild) ... ok
 test_other_cog_name_conflict_not_overwritten (test_registration.Tests.test_other_cog_name_conflict_not_overwritten) ... ok
 test_other_scoped_cog_conflict_not_overwritten (test_registration.Tests.test_other_scoped_cog_conflict_not_overwritten) ... ok
 test_owner_bootstrap_permission_no_firestore (test_registration.Tests.test_owner_bootstrap_permission_no_firestore) ... ok
+test_parameter_order_not_silently_normalized (test_registration.Tests.test_parameter_order_not_silently_normalized) ... ok
+test_payload_normalisation_has_no_side_effects (test_registration.Tests.test_payload_normalisation_has_no_side_effects) ... ok
 test_permission_zero_is_not_treated_as_unrestricted (test_registration.Tests.test_permission_zero_is_not_treated_as_unrestricted) ... ok
 test_prefix_bootstrap_commands_are_guarded (test_registration.Tests.test_prefix_bootstrap_commands_are_guarded) ... ok
 test_remote_commands_added_mid_operation_preserved (test_registration.Tests.test_remote_commands_added_mid_operation_preserved) ... ok
 test_repeated_publish_writes_nothing (test_registration.Tests.test_repeated_publish_writes_nothing) ... ok
 test_required_diagnostic_subcommand_missing_refuses (test_registration.Tests.test_required_diagnostic_subcommand_missing_refuses) ... ok
+test_required_permission_difference_remains_visible (test_registration.Tests.test_required_permission_difference_remains_visible) ... ok
 test_role_fetch_error_rejected (test_registration.Tests.test_role_fetch_error_rejected) ... ok
+test_schema_diff_is_bounded_and_missing_detected (test_registration.Tests.test_schema_diff_is_bounded_and_missing_detected) ... ok
 test_setup_schedules_ready_task_without_deadlocking (test_registration.Tests.test_setup_schedules_ready_task_without_deadlocking) ... ok
 test_single_setup_hook_and_no_ready_resync (test_registration.Tests.test_single_setup_hook_and_no_ready_resync) ... ok
 test_translated_schema_is_used (test_registration.Tests.test_translated_schema_is_used) ... ok
 test_unknown_remote_guild_command_preserved (test_registration.Tests.test_unknown_remote_guild_command_preserved) ... ok
+test_absolute_and_relative_paths_match_cog (test_start.StartTests.test_absolute_and_relative_paths_match_cog) ... ok
+test_empty_weights_trigger_installer (test_start.StartTests.test_empty_weights_trigger_installer) ... [AutoMod 시작] 누락 OCR 모델: craft_mlt_25k.pth
+[AutoMod 시작] 공개 EasyOCR 모델을 설치합니다. 이미지/대화 내용을 전송하지 않습니다.
+[AutoMod 시작] OCR 준비 실패. EasyOCR/CPU PyTorch 설치·네트워크·저장공간을 확인하세요.
+[AutoMod 시작] 기존 봇은 시작하지만 OCR 정상이나 검열 정상 운영을 의미하지 않습니다.
+ok
+test_existing_nonempty_models_skip_download (test_start.StartTests.test_existing_nonempty_models_skip_download) ... [AutoMod 시작] 모델 파일 존재. 실제 모델 로딩은 OCR 작업자가 확인합니다.
+ok
+test_installer_nonzero_not_claimed_success (test_start.StartTests.test_installer_nonzero_not_claimed_success) ... [AutoMod 시작] 누락 OCR 모델: craft_mlt_25k.pth, korean_g2.pth
+[AutoMod 시작] 공개 EasyOCR 모델을 설치합니다. 이미지/대화 내용을 전송하지 않습니다.
+[AutoMod 시작] OCR 준비 실패. EasyOCR/CPU PyTorch 설치·네트워크·저장공간을 확인하세요.
+[AutoMod 시작] 기존 봇은 시작하지만 OCR 정상이나 검열 정상 운영을 의미하지 않습니다.
+ok
+test_main_replaces_launcher_with_bot_even_when_model_install_fails (test_start.StartTests.test_main_replaces_launcher_with_bot_even_when_model_install_fails) ... [AutoMod 시작] bot.py 실행
+ok
+test_missing_models_call_real_install_entrypoint (test_start.StartTests.test_missing_models_call_real_install_entrypoint) ... [AutoMod 시작] 누락 OCR 모델: craft_mlt_25k.pth, korean_g2.pth
+[AutoMod 시작] 공개 EasyOCR 모델을 설치합니다. 이미지/대화 내용을 전송하지 않습니다.
+[AutoMod 시작] 모델 설치 확인 완료.
+ok
+test_no_bot_file_refuses_to_exec (test_start.StartTests.test_no_bot_file_refuses_to_exec) ... [AutoMod 시작] 프로젝트 루트의 bot.py와 cogs/automod.py가 필요합니다.
+ok
+test_timeout_has_no_unbounded_retry (test_start.StartTests.test_timeout_has_no_unbounded_retry) ... [AutoMod 시작] 누락 OCR 모델: craft_mlt_25k.pth, korean_g2.pth
+[AutoMod 시작] 공개 EasyOCR 모델을 설치합니다. 이미지/대화 내용을 전송하지 않습니다.
+[AutoMod 시작] 모델 설치 실패: TimeoutExpired
+[AutoMod 시작] OCR 준비 실패. EasyOCR/CPU PyTorch 설치·네트워크·저장공간을 확인하세요.
+[AutoMod 시작] 기존 봇은 시작하지만 OCR 정상이나 검열 정상 운영을 의미하지 않습니다.
+ok
+test_zero_exit_without_files_not_claimed_success (test_start.StartTests.test_zero_exit_without_files_not_claimed_success) ... [AutoMod 시작] 누락 OCR 모델: craft_mlt_25k.pth, korean_g2.pth
+[AutoMod 시작] 공개 EasyOCR 모델을 설치합니다. 이미지/대화 내용을 전송하지 않습니다.
+[AutoMod 시작] OCR 준비 실패. EasyOCR/CPU PyTorch 설치·네트워크·저장공간을 확인하세요.
+[AutoMod 시작] 기존 봇은 시작하지만 OCR 정상이나 검열 정상 운영을 의미하지 않습니다.
+ok
 
 ----------------------------------------------------------------------
-Ran 35 tests in 0.558s
+Ran 69 tests in 2.226s
 
 OK

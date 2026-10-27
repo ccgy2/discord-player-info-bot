@@ -1558,7 +1558,7 @@ async def reset_records_cmd(ctx, nick: str, typ: str):
 AUTOMOD_ROOT_NAMES = (
     "자동관리", "금칙어", "허용어", "예외", "위반", "필터테스트", "이미지테스트",
 )
-AUTOMOD_SLASH_PATCH_VERSION = "2026-10-27.registration-1"
+AUTOMOD_SLASH_PATCH_VERSION = "2026-10-27.registration-2"
 
 
 class AutoModRegistrationError(RuntimeError):
@@ -1583,7 +1583,8 @@ def _command_schema(payload, *, guild):
     """Discord 응답의 ID/버전과 생략 가능한 기본값을 제외한 명령 스키마."""
     def option(item):
         out = {key: value for key, value in item.items()
-               if key not in {"options", "choices", "name_localizations", "description_localizations"}}
+               if key not in {"options", "choices", "name_localizations", "description_localizations"}
+               and value is not None}
         out["required"] = bool(out.get("required", False))
         out["autocomplete"] = bool(out.get("autocomplete", False))
         out["options"] = [option(child) for child in item.get("options", [])]
@@ -1591,7 +1592,11 @@ def _command_schema(payload, *, guild):
                           for choice in item.get("choices", [])]
         out["name_localizations"] = item.get("name_localizations") or {}
         out["description_localizations"] = item.get("description_localizations") or {}
-        if not out.get("channel_types"):
+        if out.get("channel_types"):
+            # This is a membership restriction, not an ordered parameter list.
+            # Thread unions can serialize [10, 12, 11]; the API may return [10, 11, 12].
+            out["channel_types"] = sorted({int(value) for value in out["channel_types"]})
+        else:
             out.pop("channel_types", None)
         return out
 
@@ -1626,6 +1631,55 @@ def _matches_command(expected, actual, *, guild):
         if key not in left:
             right.pop(key, None)
     return left == right
+
+
+
+def _command_differences(expected, actual, *, guild):
+    """Only command definition paths, not tokens, HTTP headers or user content."""
+    if actual is None:
+        return ["command: Discord 응답에 없음"]
+    left = _command_schema(expected, guild=guild)
+    right = _command_schema(actual, guild=guild)
+    for key in ("contexts", "integration_types"):
+        if key not in left:
+            right.pop(key, None)
+    differences = []
+
+    def walk(a, b, path):
+        if len(differences) >= 8 or a == b:
+            return
+        if isinstance(a, dict) and isinstance(b, dict):
+            for key in sorted(set(a) | set(b)):
+                if key not in a or key not in b:
+                    differences.append(f"{path}.{key}: 필드 누락 또는 추가")
+                else:
+                    walk(a[key], b[key], f"{path}.{key}")
+                if len(differences) >= 8:
+                    return
+        elif isinstance(a, list) and isinstance(b, list):
+            if len(a) != len(b):
+                differences.append(f"{path}: 개수 {len(a)} != {len(b)}")
+            for index, (av, bv) in enumerate(zip(a, b)):
+                walk(av, bv, f"{path}[{index}]")
+        else:
+            av = json.dumps(a, ensure_ascii=False)[:100]
+            bv = json.dumps(b, ensure_ascii=False)[:100]
+            differences.append(f"{path}: expected={av}, actual={bv}")
+    walk(left, right, expected.get("name", "command"))
+    return differences[:8]
+
+
+def _normalise_command_payload(payload):
+    """Send stable channel-type sets without reordering options or choices."""
+    import copy
+    value = copy.deepcopy(payload)
+    def walk(item):
+        if item.get("channel_types"):
+            item["channel_types"] = sorted({int(v) for v in item["channel_types"]})
+        for child in item.get("options", []):
+            walk(child)
+    walk(value)
+    return value
 
 
 class AutoModSlashRegistrar:
@@ -1676,7 +1730,7 @@ class AutoModSlashRegistrar:
             payload.pop("dm_permission", None)
             payload["contexts"] = [0]
             payload["integration_types"] = [0]
-        return payload
+        return _normalise_command_payload(payload)
 
     async def _api(self, method, *, guild_id=None, payload=None):
         app_id = self.bot.application_id
@@ -1732,7 +1786,14 @@ class AutoModSlashRegistrar:
             mismatch = [p["name"] for p in desired
                         if not _matches_command(p, registered.get(_command_key(p)), guild=guild)]
             if mismatch:
-                raise AutoModRegistrationError("Discord 재조회 스키마 불일치: " + ", ".join(mismatch))
+                details = {p["name"]: _command_differences(
+                    p, registered.get(_command_key(p)), guild=guild)
+                    for p in desired if p["name"] in mismatch}
+                present = sum((1, name) in registered for name in AUTOMOD_ROOT_NAMES)
+                print("[AutoMod 명령 차이] " + json.dumps(details, ensure_ascii=False), flush=True)
+                raise AutoModRegistrationError(
+                    f"Discord 재조회 스키마 불일치: {', '.join(mismatch)} "
+                    f"(명령 존재 {present}/7; Railway의 [AutoMod 명령 차이] 확인)")
             verified = {name: str(registered[(1, name)]["id"]) for name in AUTOMOD_ROOT_NAMES}
             result = {"application_id": self.bot.application_id, "guild_id": guild_id,
                       "verified": verified, "writes": writes, "checked": len(desired)}
@@ -1838,6 +1899,35 @@ async def automod_registration_status_command(ctx):
                            allowed_mentions=discord.AllowedMentions.none())
     except Exception as exc:
         await ctx.send("등록 점검 실패: " + _slash_error(exc), allowed_mentions=discord.AllowedMentions.none())
+
+
+
+@bot.command(name="자동관리저장점검")
+@commands.guild_only()
+@commands.check(_automod_repair_permission)
+@commands.cooldown(1, 60, commands.BucketType.guild)
+async def automod_storage_diagnostic_command(ctx):
+    """Owner/Admin-only fallback; full diagnostics go to the requesting user's DM."""
+    cog = bot.get_cog("AutoMod")
+    if cog is None or not hasattr(cog, "diagnostic_report"):
+        await ctx.send("이번 수정본 cogs/automod.py가 로딩되어야 합니다.",
+                       allowed_mentions=discord.AllowedMentions.none())
+        return
+    await ctx.send("저장소를 읽기 전용으로 점검합니다. 상세 결과는 요청자 DM으로 보냅니다.",
+                   allowed_mentions=discord.AllowedMentions.none())
+    try:
+        report = await asyncio.wait_for(cog.diagnostic_report(ctx.guild, ctx.author.id), timeout=150)
+        import io
+        await ctx.author.send(
+            "AutoMod 저장/OCR 점검 결과입니다. 위반 기록이나 처벌을 만들지 않았습니다.",
+            file=discord.File(io.BytesIO(report.encode("utf-8")), filename="automod-health.txt"),
+            allowed_mentions=discord.AllowedMentions.none())
+    except discord.Forbidden:
+        await ctx.send("DM을 보낼 수 없습니다. 서버 DM 허용 후 재실행하거나 /자동관리 연결점검을 사용하세요.",
+                       allowed_mentions=discord.AllowedMentions.none())
+    except Exception as exc:
+        await ctx.send("점검 완료를 확인하지 못했습니다: " + _slash_error(exc),
+                       allowed_mentions=discord.AllowedMentions.none())
 
 
 async def _automod_register_joined_guild(guild):

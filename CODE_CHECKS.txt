@@ -1,0 +1,5 @@
+bot.py: Python 3.11 grammar + current Python 3.13.5 compile OK
+cogs/automod.py: Python 3.11 grammar + current Python 3.13.5 compile OK
+start_automod.py: Python 3.11 grammar + current Python 3.13.5 compile OK
+Unchanged existing top-level bot functions: 66
+Changed existing top-level bot functions: _command_schema

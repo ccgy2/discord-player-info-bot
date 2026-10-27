@@ -1,0 +1,15 @@
+Exit code: 0
+usage: automod.py [-h] [--check | --install-ocr-models | --check-ocr-models]
+                  [--model-dir MODEL_DIR]
+
+단일 파일 Discord 자동관리 Cog: 설치·로컬 점검 도구
+
+options:
+  -h, --help            show this help message and exit
+  --check               패키지·내장 사전·모델 파일·환경변수 유무 확인
+  --install-ocr-models  한국어·영어 CPU 모델 최초 다운로드
+  --check-ocr-models    네트워크 없이 실제 모델 초기화 확인
+  --model-dir MODEL_DIR
+                        OCR 모델 폴더
+
+봇은 기존 bot.py로 실행하세요. 이 CLI는 Discord에 로그인하지 않습니다.

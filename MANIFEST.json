@@ -1,7 +1,58 @@
 {
-  "bot.py": "d794262189ee0972d67fb6faf75cf35d74a3e25933372083b6f7ad8f79111ff7",
-  "README_SLASH_FIX.md": "0cf30a40f6fb62295e209bdfe9061ada288393630dd5a70362ee7e3ee506a416",
-  "TEST_OUTPUT.txt": "04c9c31c0a6ec25e1680b64eb828607d613070624ca044eece339f8f2ee8dcdd",
-  "tests/test_registration.py": "a4064006dbb57c0beaf97cb2085fe7d8bc02650546814c23569b06622217fae1",
-  "bot_registration_changes.diff": "59605874175744220c4009f529eb5041cd2ca8f88ac92baece17fb57a71e9438"
+  "CLI_HELP_CHECK.txt": {
+    "bytes": 668,
+    "sha256": "df896ffe763a5be06dccb55e89b7df4bdd357ed6a5265d25d1962be278ab6686"
+  },
+  "CODE_CHECKS.txt": {
+    "bytes": 313,
+    "sha256": "4f34332e5fc5d8099df360b7989dc3a77a4f168bd335eb7fed7f7019e5cb86e8"
+  },
+  "README_KO.md": {
+    "bytes": 12144,
+    "sha256": "4f7f596849ef16bc157e2877c8a11af2a26b1dea7502675cda1166d1fe6c9bbf"
+  },
+  "REGRESSION_REPRO.txt": {
+    "bytes": 209,
+    "sha256": "c50cee4fb51a09fd6e7f00441964de76a5832dada36be9be284c4d57944821d2"
+  },
+  "TEST_OUTPUT.txt": {
+    "bytes": 10924,
+    "sha256": "7a12a3068b19a2d2f05ca6b61163bdf45ee639d63c58ae69a34988da63c68857"
+  },
+  "bot.py": {
+    "bytes": 87952,
+    "sha256": "2415e8a0bfdf016263724b4f93530035a224839ed2d3ea8e2e117e7dc2f3f005"
+  },
+  "bot.py.diff": {
+    "bytes": 7366,
+    "sha256": "f59351d6fc6c91a5ba3ba1b381176afce5b34cbb7c2ba8949c47d46612398978"
+  },
+  "cogs/automod.py": {
+    "bytes": 314703,
+    "sha256": "4a20e4e83c3b2d57cc9e18dfc07ed88a8222a82faf363fb60a726a28e9808d82"
+  },
+  "cogs_automod.py.diff": {
+    "bytes": 18995,
+    "sha256": "186629baaa862e6d95136bdfae7149bcef8bfb23b946f7eee7209d1b5eebf93e"
+  },
+  "firestore.indexes.automod.json": {
+    "bytes": 1465,
+    "sha256": "3ff6de5740b83004d09bc3cfeeff9a3aa6a22f411b78ac3364d05ba5e876edf4"
+  },
+  "start_automod.py": {
+    "bytes": 3418,
+    "sha256": "c03e19096c3277ca2029949ab6344171855d3bfcfa750419d4b76e7434778beb"
+  },
+  "tests/test_diagnostics.py": {
+    "bytes": 10223,
+    "sha256": "2e9b38d6fe195660ab8411db653881f12ca8017fca9aba78e6fd580d5561f166"
+  },
+  "tests/test_registration.py": {
+    "bytes": 22631,
+    "sha256": "da56c5008f6978bfe73ec507a2d32c3457f5918fbf0ba38deb438684e22969e7"
+  },
+  "tests/test_start.py": {
+    "bytes": 4294,
+    "sha256": "f1c5f22da04f1bb7f9c626a5677a08570fe44b5edd049b9cc9ee94b026730cad"
+  }
 }

@@ -1,0 +1,4 @@
+Synthetic response based on the same allowed channel types; NOT a captured Discord response.
+Old comparator: False
+New comparator: True
+Parameter/choice ordering and permission/constraint checks are retained.
