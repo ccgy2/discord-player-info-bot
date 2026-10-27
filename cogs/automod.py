@@ -22,7 +22,7 @@ import os
 from pathlib import Path
 import sys
 
-__version__ = "2.1.0-singlefile"
+__version__ = "2.1.2-singlefile-diagnostics"
 _SINGLE_FILE = Path(__file__).resolve()
 ROOT = _SINGLE_FILE.parent.parent
 
@@ -2371,8 +2371,12 @@ def _ocr_worker_main(argv: list[str] | None = None) -> int:
     model_dir = args.model_dir.resolve()
     _block_runtime_network()
     try:
-        if not model_dir.is_dir():
-            raise FileNotFoundError("모델 디렉터리가 없음; automod.py --install-ocr-models를 먼저 실행하세요")
+        missing = [name for name in ("craft_mlt_25k.pth", "korean_g2.pth")
+                   if not (model_dir / name).is_file()]
+        if missing:
+            _send(protocol_out, {"type": "ready", "status": "unavailable", "detail":
+                "OCR 모델 누락: " + ", ".join(missing) + "; python cogs/automod.py --install-ocr-models 실행 필요"})
+            return 2
         with redirect_stdout(sys.stderr):
             import torch
             import numpy as np
@@ -3059,6 +3063,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import logging
 import re
 import uuid
 from dataclasses import dataclass
@@ -3067,6 +3072,7 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from google.api_core import exceptions as google_errors
+from google.auth.exceptions import GoogleAuthError
 from google.cloud.firestore_v1 import AsyncClient, async_transactional
 from google.cloud.firestore_v1.base_query import FieldFilter
 
@@ -3190,6 +3196,84 @@ def parse_incident_id(value: str) -> tuple[int, int]:
         raise ValueError("사건 ID는 서버ID:메시지ID 형식입니다.") from exc
 
 
+
+def _firestore_index_link(message: str) -> str | None:
+    """Return only a Firebase Console index-creation URL, never arbitrary URLs."""
+    from urllib.parse import parse_qs, urlencode, urlsplit
+    for candidate in re.findall(r"https://console\.firebase\.google\.com/[^\s<>\"']+", message):
+        try:
+            value = urlsplit(candidate.rstrip(".,)"))
+            if (value.scheme != "https" or value.hostname != "console.firebase.google.com"
+                    or value.username or value.password or value.port not in (None, 443)
+                    or value.fragment):
+                continue
+            if not re.fullmatch(r"/(?:v1/r/)?project/[a-z][a-z0-9-]{4,28}[a-z0-9]/firestore/indexes", value.path):
+                continue
+            query = parse_qs(value.query, keep_blank_values=True)
+            encoded = query.get("create_composite", [])
+            if (set(query) != {"create_composite"} or len(encoded) != 1
+                    or not re.fullmatch(r"[A-Za-z0-9_+/=-]{1,4096}", encoded[0])):
+                continue
+            return "https://console.firebase.google.com" + value.path + "?" + urlencode({"create_composite": encoded[0]})
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
+def firestore_diagnostic(error: BaseException, operation: str) -> dict:
+    """Classify an exception without exposing raw messages, credentials or documents."""
+    leaf = error
+    visited = set()
+    known = {"FailedPrecondition", "PermissionDenied", "Forbidden", "Unauthenticated",
+             "Unauthorized", "RefreshError", "DefaultCredentialsError", "NotFound",
+             "ServiceUnavailable", "Unavailable", "DeadlineExceeded", "TimeoutError",
+             "ConnectionError", "OSError", "ResourceExhausted", "TooManyRequests"}
+    for _ in range(8):
+        # Keep the meaningful SDK status instead of its low-level gRPC cause.
+        if type(leaf).__name__ in known:
+            break
+        if id(leaf) in visited:
+            break
+        visited.add(id(leaf))
+        next_error = leaf.__cause__ or leaf.__context__
+        if next_error is None:
+            break
+        leaf = next_error
+    name = type(leaf).__name__
+    text = str(leaf)  # used for classification only; never logged verbatim
+    lower = text.casefold()
+    link = None
+    if name == "FailedPrecondition" and "index" in lower and any(
+        word in lower for word in ("require", "create", "build", "missing", "not ready")
+    ):
+        category = "missing_index"
+        hint = "Firestore 복합 인덱스가 없거나 아직 준비되지 않았습니다. 인덱스를 생성하고 사용 가능 상태인지 확인하세요."
+        link = _firestore_index_link(text)
+    elif name in {"PermissionDenied", "Forbidden"}:
+        category = "permission_denied"
+        hint = "서비스 계정 IAM, Firestore API 활성화, 대상 프로젝트를 확인하세요. 클라이언트 보안 규칙을 공개로 바꾸지 마세요."
+    elif name in {"Unauthenticated", "Unauthorized", "RefreshError", "DefaultCredentialsError"}:
+        category = "authentication"
+        hint = "FIREBASE_KEY/ADC 인증과 서비스 계정 상태를 확인하세요. 키 내용을 채팅이나 로그에 출력하지 마세요."
+    elif name == "NotFound":
+        category = "not_found"
+        hint = "프로젝트 ID 및 Firestore (default) 데이터베이스 존재 여부를 확인하세요."
+    elif name in {"ServiceUnavailable", "Unavailable", "DeadlineExceeded", "TimeoutError", "ConnectionError", "OSError"}:
+        category = "network_or_timeout"
+        hint = "Firestore 네트워크/gRPC 연결 또는 요청 시간 초과입니다. 재연결을 확인하기 전 처벌은 보류합니다."
+    elif name in {"ResourceExhausted", "TooManyRequests"}:
+        category = "quota"
+        hint = "Firestore 요청/할당량 제한을 확인하세요. 대체 카운터로 처벌하지 않습니다."
+    elif name == "FailedPrecondition":
+        category = "failed_precondition"
+        hint = "Firestore 사전 조건 오류입니다. 현재 정보만으로 인덱스 누락이라고 단정하지 않습니다."
+    else:
+        category = "unknown"
+        hint = "확인되지 않은 저장소 오류입니다. 원문/키를 공개하지 않은 상태에서 예외 종류와 실패 단계를 확인하세요."
+    return {"operation": operation, "category": category, "exception": name,
+            "hint": hint, "index_url": link, "at": utc_now().isoformat()}
+
+
 class Store:
     def __init__(self, client: AsyncClient, *, runtime=None):
         if not isinstance(client, AsyncClient):
@@ -3198,6 +3282,20 @@ class Store:
         self.runtime = runtime
         self._healthy = False
         self._closed = False
+        self.last_error: dict | None = None
+        self._fault_epoch = 0
+
+    def _note_failure(self, error: BaseException, operation: str) -> None:
+        self._healthy = False
+        self._fault_epoch += 1
+        self.last_error = firestore_diagnostic(error, operation)
+        diagnostic = self.last_error
+        # No raw exception/headers/credential JSON or message evidence.
+        logging.getLogger(__name__).error(
+            "[AutoMod Firestore 오류] operation=%s category=%s exception=%s hint=%s",
+            diagnostic["operation"], diagnostic["category"], diagnostic["exception"], diagnostic["hint"])
+        if diagnostic["index_url"]:
+            logging.getLogger(__name__).error("[AutoMod 인덱스 생성 링크] %s", diagnostic["index_url"])
 
     @property
     def healthy(self) -> bool:
@@ -3246,9 +3344,42 @@ class Store:
             await self.client.collection("discord_moderation_meta").document("health").get(retry=None, timeout=10)
             self._healthy = True
             return True
-        except (google_errors.GoogleAPICallError, OSError, TimeoutError) as exc:
-            self._healthy = False
+        except (google_errors.GoogleAPICallError, GoogleAuthError, OSError, TimeoutError) as exc:
+            self._note_failure(exc, "probe")
             raise StorageUnavailable("Firestore 실제 연결 점검에 실패했습니다.") from exc
+
+    async def diagnose(self, guild_id: int, user_id: int) -> dict:
+        report = {"document_read": False, "queries": [], "ready": False, "error": None}
+        try:
+            await self.probe()
+            report["document_read"] = True
+        except StorageUnavailable:
+            report["error"] = self.last_error
+            return report
+        epoch = self._fault_epoch
+        cases = self.guild_ref(guild_id).collection("incidents")
+        queries = [
+            ("pending_logs", cases.where(filter=FieldFilter("log_status", "in", ["failed", "pending", "unknown", "not_started"])).order_by("log_attempt_at")),
+            ("retention", cases.where(filter=FieldFilter("retention_state", "in", ["waiting", "retry"])).where(filter=FieldFilter("retention_next_attempt_at", "<=", utc_now())).order_by("retention_next_attempt_at")),
+            ("violations_all", cases.where(filter=FieldFilter("user_id", "==", _id(user_id))).where(filter=FieldFilter("counted_ever", "==", True)).order_by("created_at", direction="DESCENDING")),
+            ("violations_current", cases.where(filter=FieldFilter("user_id", "==", _id(user_id))).where(filter=FieldFilter("counted_ever", "==", True)).where(filter=FieldFilter("generation", "==", 0)).order_by("created_at", direction="DESCENDING")),
+        ]
+        for name, query in queries:
+            try:
+                # Bypass the health guard only for this authorized read-only check.
+                # Do not return any document contents, even if the query matches.
+                async for _ in query.limit(1).stream(retry=None, timeout=15):
+                    pass
+                report["queries"].append({"name": name, "ok": True})
+            except (google_errors.GoogleAPICallError, GoogleAuthError, OSError, TimeoutError) as exc:
+                self._note_failure(exc, "diagnostic_" + name)
+                report["queries"].append({"name": name, "ok": False, "error": dict(self.last_error)})
+        report["ready"] = all(item["ok"] for item in report["queries"]) and self._fault_epoch == epoch
+        self._healthy = report["ready"]
+        if report["ready"]:
+            self.last_error = None
+        report["error"] = self.last_error
+        return report
 
     async def recover(self) -> bool:
         return await self.probe()
@@ -3263,16 +3394,16 @@ class Store:
         try:
             snapshot = await reference.get(retry=None, timeout=15)
             return snapshot.to_dict() if snapshot.exists else None
-        except (google_errors.GoogleAPICallError, OSError, TimeoutError) as exc:
-            self._healthy = False
+        except (google_errors.GoogleAPICallError, GoogleAuthError, OSError, TimeoutError) as exc:
+            self._note_failure(exc, "document_read")
             raise StorageUnavailable("Firestore 조회에 실패했습니다.") from exc
 
     async def _query(self, query) -> list:
         self._require()
         try:
             return [snapshot async for snapshot in query.stream(retry=None, timeout=20)]
-        except (google_errors.GoogleAPICallError, OSError, TimeoutError) as exc:
-            self._healthy = False
+        except (google_errors.GoogleAPICallError, GoogleAuthError, OSError, TimeoutError) as exc:
+            self._note_failure(exc, "query")
             raise StorageUnavailable("Firestore 목록 조회에 실패했습니다.") from exc
 
     async def _transaction(self, callback: Callable):
@@ -3307,8 +3438,8 @@ class Store:
                 self._healthy = False
                 raise StorageUnavailable("Firestore 트랜잭션 충돌 재시도 한도를 초과했습니다.") from exc
             raise
-        except (google_errors.GoogleAPICallError, OSError, TimeoutError) as exc:
-            self._healthy = False
+        except (google_errors.GoogleAPICallError, GoogleAuthError, OSError, TimeoutError) as exc:
+            self._note_failure(exc, "transaction")
             raise StorageUnavailable("Firestore 트랜잭션 결과가 불확실해 자동 처벌을 중지했습니다.") from exc
 
     @staticmethod
@@ -3886,8 +4017,8 @@ class Store:
         try:
             result = await query.count().get(timeout=15)
             return int(result[0][0].value)
-        except (google_errors.GoogleAPICallError, OSError, TimeoutError) as exc:
-            self._healthy = False
+        except (google_errors.GoogleAPICallError, GoogleAuthError, OSError, TimeoutError) as exc:
+            self._note_failure(exc, "aggregation")
             raise StorageUnavailable("Firestore 운영 상태 집계에 실패했습니다.") from exc
 
     async def storage_status(self, guild_id: int) -> dict:
@@ -5521,8 +5652,10 @@ class AutoMod(commands.Cog):
                     self._last_retention = time.monotonic()
             except StorageUnavailable:
                 self.service.halted = True
+                diagnostic = self.store.last_error or {}
+                label = diagnostic.get("category", "unknown")
                 for guild in self.bot.guilds:
-                    await self.operator_alert(guild.id, 'Firestore 연결 장애; 새 자동 처벌을 보류하고 재연결을 기다립니다')
+                    await self.operator_alert(guild.id, f'Firestore 작업 오류 [{label}]; 새 자동 처벌 보류. /자동관리 연결점검으로 원인을 확인하세요')
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -6062,9 +6195,15 @@ class AutoMod(commands.Cog):
 
     @automatic.command(name='저장상태', description='Firestore·비공개 로그·OCR·대기 및 실패 상태를 확인합니다')
     async def storage_status(self, interaction: discord.Interaction) -> None:
-        lines = [f'Firestore 연결 확인: {self.store.healthy} / 자동 처벌 보호 중지: {self.service.halted}',
+        lines = [f'Firestore 최근 작업 정상: {self.store.healthy} / 자동 처벌 보호 중지: {self.service.halted}',
                  f'OCR 준비: {self.ocr.ready} / 이미지 메시지 대기: {self._image_jobs.qsize()}/32',
                  f'미확정 메시지 ID 보류: {len(self._deferred)}/256 (누적 횟수 캐시 아님)']
+        if self.store.last_error:
+            diagnostic = self.store.last_error
+            lines.append(f'최근 오류: {diagnostic["category"]} / {diagnostic["exception"]} / {diagnostic["operation"]}')
+            lines.append(diagnostic['hint'])
+            if diagnostic.get('index_url'):
+                lines.append('인덱스 생성 링크: ' + diagnostic['index_url'])
         if self.store.healthy:
             config = await self.store.get_config(interaction.guild_id)
             stats = await self.store.storage_status(interaction.guild_id)
@@ -6083,29 +6222,46 @@ class AutoMod(commands.Cog):
         lines.append('연결 복구 시 저장된 사건·취소·초기화·설정과 현재 메시지를 확인합니다. 불확실한 Discord 조치는 자동 반복하지 않습니다.')
         await respond(interaction, '\n'.join(lines))
 
-    @automatic.command(name='연결점검', description='위반 증가 없이 Firestore·로그·OCR·선택적 Storage를 점검합니다')
-    async def connection_check(self, interaction: discord.Interaction) -> None:
-        lines = []
-        try:
-            await self.store.probe()
+    async def diagnostic_report(self, guild, actor_id: int) -> str:
+        """Called only after an authorized slash/prefix check; no writes or sanctions."""
+        lines = [f'자동관리 진단 · {__version__}',
+                 '읽기 전용: 사건·위반 횟수·삭제·DM 경고·타임아웃을 생성하지 않습니다.']
+        report = await self.store.diagnose(guild.id, actor_id)
+        lines.append('Firestore 단일 문서 읽기: ' + ('성공' if report['document_read'] else '실패'))
+        for item in report['queries']:
+            lines.append(f"쿼리 {item['name']}: " + ('성공' if item['ok'] else '실패'))
+            error = item.get('error')
+            if error:
+                lines.append(f"  {error['category']} / {error['exception']} · {error['hint']}")
+                if error.get('index_url'):
+                    lines.append('  인덱스 생성: ' + error['index_url'])
+        if not report['document_read'] and report.get('error'):
+            error = report['error']
+            lines.append(f"{error['category']} / {error['exception']} · {error['hint']}")
+        if report['ready']:
             self.service.resume_after_reconnect()
-            lines.append('Firestore 실제 서버 조회: 성공. 테스트 사건·카운터 변경 없음.')
-            config = await self.store.get_config(interaction.guild_id)
-            _, report = await self.permission_report(interaction.guild, config)
-            lines.append(report)
-        except StorageUnavailable:
+            lines.append('Firestore 필수 읽기 쿼리 점검 통과. 쓰기 IAM과 실제 제재 성공을 검증한 것은 아닙니다.')
+            config = await self.store.get_config(guild.id)
+            _, permissions = await self.permission_report(guild, config)
+            lines.append(permissions)
+        else:
             self.service.halted = True
-            lines.append('Firestore 연결 실패: 새 횟수 기반 처벌을 보류합니다. ADC·IAM·프로젝트·네트워크를 확인하세요.')
+            lines.append('저장소 점검 미통과: 새 자동 처벌을 보류합니다. 인덱스 오류는 인증 실패와 별개입니다.')
+        lines.append('OCR 준비: ' + ('정상' if self.ocr.ready else self.ocr.last_error))
+        lines.append('OCR 모델 경로: ' + str(MODELS_PATH))
         if self.runtime and self.runtime.settings.storage_bucket:
             try:
                 proof = await self.runtime.check_storage()
-                lines.append('선택적 Storage 비공개 점검: ' + json.dumps(proof, ensure_ascii=False))
+                lines.append('선택적 Storage: ' + json.dumps(proof, ensure_ascii=False))
             except FirebaseStorageError as exc:
                 lines.append(f'Storage 확인 실패: {exc.code}. 원본 보관을 켜지 마세요.')
         else:
-            lines.append('원본 Storage 버킷 미설정: OCR과 원본 미보관 운영에는 필요하지 않습니다.')
-        lines.append('이 명령 자체는 삭제·통지·타임아웃·횟수 증가를 실행하지 않습니다.')
-        await respond(interaction, '\n'.join(lines))
+            lines.append('원본 Storage 미설정: OCR만 사용할 때는 필요하지 않습니다.')
+        return '\n'.join(lines)
+
+    @automatic.command(name='연결점검', description='위반 증가 없이 Firestore·로그·OCR·선택적 Storage를 점검합니다')
+    async def connection_check(self, interaction: discord.Interaction) -> None:
+        await respond(interaction, await self.diagnostic_report(interaction.guild, interaction.user.id))
 
     @automatic.command(name='로그재시도', description='사건 로그만 복구합니다. 위반 증가·타임아웃 재실행 없음')
     async def retry_log(self, interaction: discord.Interaction, 사건: str) -> None:
