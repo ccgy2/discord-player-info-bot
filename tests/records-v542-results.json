@@ -1,0 +1,663 @@
+{
+  "release": "5.4.2",
+  "webContract": "5.4.1",
+  "verifiedAt": "2026-10-24T14:46:11.171367+00:00",
+  "validationScope": "Offline actual bot/Cog/helper modules; real discord.py extension manager; fake Discord and Firestore; no login, token use, messages, role API, production writes or deployment",
+  "totalTests": 153,
+  "passed": true,
+  "passedTests": 153,
+  "failedTests": 0,
+  "skippedTests": 0,
+  "testModules": {
+    "test_bot_integration": 13,
+    "test_main_cog542": 4,
+    "test_records_roster_bridge": 51,
+    "test_records_roster_cog": 12,
+    "test_records_roster_roles": 40,
+    "test_roster_sync": 33
+  },
+  "runtime": {
+    "python": "3.12.14",
+    "discord.py": "2.4.0"
+  },
+  "pythonCompile": "passed",
+  "extension": "cogs.records_roster",
+  "mainFile": "bot.py",
+  "channelId": "1551385834995978301",
+  "roleIds": {
+    "first": "1520484992017367120",
+    "second": "1520485077182582977"
+  },
+  "sourceHashes": {
+    "apply_punishment_roster.py": "684576887332a245029016079e812c16e1a097d6bd7813b87e4e5a49500becde",
+    "bot.py": "a393051aace04c10a5b56926171cfe74ef58fa25dde34ee052b30579898c7890",
+    "cogs/_records_roster/__init__.py": "b52c7d4c13034987b7b465fe1b1d1d0a4842f343a8701d3397c437dc66150f7c",
+    "cogs/_records_roster/bridge.py": "15c7f2d580ede531b124c3a7b7fee7f2715e1bc8a4fe5769adcde82409bbe959",
+    "cogs/_records_roster/roles.py": "ac3dc2f7de72364ee9a49a05ff55cd6db7949abb6fd06830f5ceb12bb5238805",
+    "cogs/records_roster.py": "2d318788ec76e5fe388e1b1edcbc4b712d22c070e91ac7146035b01e1a87dc5a",
+    "delete_all_punishment.py": "a6a1d468c61c2c9ef02519d597a3cd9c4c45907640b16e059145a1a3a2318f28",
+    "roster_sync.py": "35ef8093bc287fb1ce3020f1e8a959c3361c141aae2213fd67d5fdcd42b8c4a1",
+    "tests/test_bot_integration.py": "241ff1d3184f352643ef645c4040af4b97c1fcf15d8e0eeb8ad59e962628f9b6",
+    "tests/test_main_cog542.py": "0ac8cbb0b3189a75c629a5a4c73167c560bc691dc6b6fade728f88ccf9b67078",
+    "tests/test_records_roster_bridge.py": "aef252a91536c85c2fd94bffbd6ef20c0e214c2137e11295264223b30cd88001",
+    "tests/test_records_roster_cog.py": "ecc90455f5241e1aed6b22f265dfcedeaace970199cd10e0a12e47b9cb165bd8",
+    "tests/test_records_roster_roles.py": "3886b891a036a561380c7f719f6b6c67f22d9f062d1cb182615ab1171d912a74",
+    "tests/test_roster_sync.py": "345b296e52feab6378232b008e4a1b15cf2bc9913e22991082e5b4702b993738"
+  },
+  "cases": [
+    {
+      "name": "test_bot_integration.CallbackIntegrationTests.test_full_uncached_leave_join_then_reaction_flow",
+      "status": "passed"
+    },
+    {
+      "name": "test_bot_integration.CallbackIntegrationTests.test_role_change_handler_registers_only_configured_role",
+      "status": "passed"
+    },
+    {
+      "name": "test_bot_integration.CallbackIntegrationTests.test_wrong_message_channel_and_guild_do_not_register",
+      "status": "passed"
+    },
+    {
+      "name": "test_bot_integration.GuildConfigurationTests.test_channel_and_explicit_guild_mismatch_is_not_guessed",
+      "status": "passed"
+    },
+    {
+      "name": "test_bot_integration.GuildConfigurationTests.test_explicit_guild_is_honored",
+      "status": "passed"
+    },
+    {
+      "name": "test_bot_integration.GuildConfigurationTests.test_multiple_guilds_require_unambiguous_scope",
+      "status": "passed"
+    },
+    {
+      "name": "test_bot_integration.GuildConfigurationTests.test_optional_role_setting_does_not_come_from_team_role_config",
+      "status": "passed"
+    },
+    {
+      "name": "test_bot_integration.GuildConfigurationTests.test_single_guild_legacy_setup_resolves_without_new_required_setting",
+      "status": "passed"
+    },
+    {
+      "name": "test_bot_integration.QueryIntegrationTests.test_active_roster_and_autocomplete_hide_departed_preserve_manual_players",
+      "status": "passed"
+    },
+    {
+      "name": "test_bot_integration.QueryIntegrationTests.test_fa_and_trade_cannot_use_departed_player",
+      "status": "passed"
+    },
+    {
+      "name": "test_bot_integration.QueryIntegrationTests.test_history_lookup_prefers_active_homonym_after_team_filter",
+      "status": "passed"
+    },
+    {
+      "name": "test_bot_integration.QueryIntegrationTests.test_history_query_still_returns_departed_player_and_movement",
+      "status": "passed"
+    },
+    {
+      "name": "test_bot_integration.QueryIntegrationTests.test_manual_registration_cannot_duplicate_an_archived_same_player",
+      "status": "passed"
+    },
+    {
+      "name": "test_main_cog542.MainCogTests.test_all_existing_commands_and_handlers_except_ready_are_unchanged",
+      "status": "passed"
+    },
+    {
+      "name": "test_main_cog542.MainCogTests.test_existing_db_and_one_explicit_extension_preserve_other_extensions",
+      "status": "passed"
+    },
+    {
+      "name": "test_main_cog542.MainCogTests.test_extension_failure_keeps_original_bot_available_and_sanitizes_log",
+      "status": "passed"
+    },
+    {
+      "name": "test_main_cog542.MainCogTests.test_ready_retains_original_services_without_old_bridge_starter",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_adjacent_and_legacy_mentions_are_distinct_without_role_pings",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_any_truncated_candidate_evidence_is_explicitly_flagged",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_cross_channel_and_cross_guild_payloads_are_rejected",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_disabled_default_needs_no_credentials",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_distinct_team_sections_are_not_merged",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_embed_fields_and_raw_source_are_preserved",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_four_explicit_labels_and_underscore_names",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_hidden_tail_or_attachment_replacement_changes_hash",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_matching_explicit_project_reuses_existing_database_only",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_more_than_100_candidates_sets_review_flag",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_non_bmp_text_obeys_browser_utf16_field_limits",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_only_unknown_message_404_counts_as_deletion",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_opt_in_requires_explicit_project_and_valid_scope",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_parser_identity_upgrade_advances_revision_once_without_raw_change",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_role_pings_and_plain_ids_never_become_discord_identity",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_roles_are_enabled_with_existing_bridge_and_can_be_paused_explicitly",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_secondary_project_requires_separate_credentials_and_named_app",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_section_heading_and_named_player_field_work_without_inferring_ids",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_unknown_and_other_movement_formats_require_manual_resolution",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.ConfigAndParserTests.test_unknown_mention_lists_keep_identity_but_not_guessed_direction",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.RuntimeTests.test_approval_refresh_fetches_actual_source_and_latest_revision",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.RuntimeTests.test_bulk_delete_and_late_original_are_idempotent",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.RuntimeTests.test_catchup_cursor_does_not_skip_failed_write",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.RuntimeTests.test_channel_permission_failure_stops_before_target_writes",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.RuntimeTests.test_close_cancels_dispatched_fetch_before_it_can_write",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.RuntimeTests.test_close_drains_already_issued_blocking_write_and_ignores_late_event",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.RuntimeTests.test_close_removes_listeners_stops_polling_and_cannot_restart",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.RuntimeTests.test_discord_unknown_message_marks_source_deleted_and_blocks_check",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.RuntimeTests.test_factory_cleans_partially_registered_listeners",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.RuntimeTests.test_factory_cleans_started_inbox_when_roles_start_fails",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.RuntimeTests.test_failed_startup_does_not_register_duplicate_listeners",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.RuntimeTests.test_first_run_backfill_is_explicit_bounded_and_resumes_after_failure",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.RuntimeTests.test_forbidden_rate_limit_and_unknown_channel_never_mark_deleted",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.RuntimeTests.test_invalid_nonce_cannot_verify_source",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.RuntimeTests.test_messages_before_initial_cutoff_are_not_backfilled_implicitly",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.RuntimeTests.test_new_source_is_queued_without_role_or_player_writes",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.RuntimeTests.test_other_channel_is_ignored",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.RuntimeTests.test_partial_raw_edit_fetches_canonical_content",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.RuntimeTests.test_start_from_now_and_reconnect_registers_no_duplicate_listeners",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.StoreTests.test_cursor_from_other_channel_is_not_reused",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.StoreTests.test_cursor_initialization_and_monotonic_progress",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.StoreTests.test_delete_is_idempotent_and_late_create_cannot_resurrect",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.StoreTests.test_duplicate_create_is_one_source_one_revision",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.StoreTests.test_existing_site_identity_is_required_before_connection",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.StoreTests.test_failed_check_keeps_source_and_requests_a_new_explicit_retry",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.StoreTests.test_missing_delete_does_not_create_empty_requests",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.StoreTests.test_old_verification_cannot_overwrite_new_nonce",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.StoreTests.test_reads_are_scoped_and_all_writes_exclude_players_actions_locks",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.StoreTests.test_same_content_edit_advances_watermark_against_late_history",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.StoreTests.test_source_and_matching_verification_nonce_commit_atomically",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_bridge.StoreTests.test_source_edit_increments_revision_and_stale_original_is_ignored",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_cog.CogLifecycleTests.test_actual_reload_closes_old_instance_before_starting_one_new_instance",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_cog.CogLifecycleTests.test_bot_close_invokes_cog_cleanup",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_cog.CogLifecycleTests.test_disabled_config_never_initializes_database_or_service",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_cog.CogLifecycleTests.test_duplicate_extension_load_does_not_create_second_service",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_cog.CogLifecycleTests.test_failed_partial_start_is_clean_and_retry_keeps_original_cutoff",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_cog.CogLifecycleTests.test_invalid_config_logs_no_secrets_and_keeps_existing_bot_working",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_cog.CogLifecycleTests.test_ready_uses_existing_client_and_preserves_main_handlers_commands",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_cog.CogLifecycleTests.test_reconnect_ready_events_do_not_duplicate_services_or_tasks",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_cog.CogLifecycleTests.test_repeated_close_waits_for_same_cleanup_and_does_not_restart",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_cog.CogLifecycleTests.test_setup_load_returns_before_ready_and_unload_cancels_wait",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_cog.CogLifecycleTests.test_unload_during_start_owns_and_cleans_partial_instance",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_cog.CogLifecycleTests.test_unload_stops_both_tasks_and_removes_only_owned_listeners",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleStoreTests.test_claim_serializes_one_member_and_never_writes_authorized_business_data",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleStoreTests.test_expired_lease_is_recoverable_but_old_owner_cannot_renew_or_finish",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleStoreTests.test_explicit_retry_cannot_replay_stale_job_or_bypass_live_lease",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleStoreTests.test_explicit_retry_consumed_once_without_overwriting_new_nonce",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleStoreTests.test_guard_refuses_latest_head_change_and_releases_its_own_lease",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleStoreTests.test_missing_or_mismatched_binding_never_adopts_by_name",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleStoreTests.test_queue_pages_progress_past_not_yet_due_work",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleStoreTests.test_rejected_action_cannot_authorize_any_role_work",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleStoreTests.test_role_health_merges_without_erasing_source_cursor",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleStoreTests.test_stale_target_version_and_same_version_new_head_are_superseded",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleStoreTests.test_timeout_keeps_lease_and_does_not_retry_until_uncertain_request_window_ends",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_add_forbidden_keeps_old_role_and_reports_blocked",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_add_not_observed_never_removes_opposite_or_claims_success",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_approved_job_adds_desired_before_removing_opposite_and_keeps_other_roles",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_bound_guild_can_be_fetched_when_missing_from_cache",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_bridge_reuses_existing_entrypoint_and_optional_role_pause",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_close_during_ambiguous_add_retains_lease_and_new_worker_recovers",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_close_is_idempotent_and_stopped_worker_cannot_restart",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_cross_guild_and_forged_jobs_never_reach_discord",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_disconnect_after_server_remove_holds_lease_and_recovers_without_replay",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_duplicate_applied_job_and_already_correct_roles_do_not_mutate",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_long_role_processing_refreshes_heartbeat_between_steps",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_missing_configured_id_never_adopts_same_name_replacement",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_missing_configured_managed_and_wrong_hierarchy_roles_block_without_mutations",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_missing_member_or_bot_account_is_blocked_without_name_lookup",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_newer_head_detected_between_add_and_remove_stops_old_job",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_partial_failure_retries_only_missing_step_and_finally_verifies",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_rate_limited_read_is_retryable_and_does_not_touch_roles",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_renamed_configured_roles_still_use_owner_supplied_ids",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_role_definition_change_after_add_blocks_remove",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_role_rename_between_add_and_remove_does_not_change_target",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_same_name_decoy_roles_are_never_selected_or_removed",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_second_squad_uses_reverse_operation_order",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_shutdown_during_request_keeps_lease_and_restart_recovers",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_slow_lease_response_cannot_start_an_http_call_without_headroom",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_start_and_reconnect_keep_single_worker_task",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_two_workers_cannot_overlap_the_same_member",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_unassigned_correction_removes_only_two_squad_roles",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_uncertain_timeout_after_server_add_holds_lease_until_recovery",
+      "status": "passed"
+    },
+    {
+      "name": "test_records_roster_roles.RoleWorkflowTests.test_unchanged_approval_still_reconciles_roles_using_its_immutable_identity",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.StoreTests.test_corrupt_deterministic_document_does_not_recurse_or_overwrite",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.StoreTests.test_display_rename_conflict_preserves_existing_name",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.StoreTests.test_duplicate_linked_rows_all_hide_but_ambiguous_restore_is_blocked",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.StoreTests.test_foreign_scoped_id_prevents_ambiguous_legacy_adoption",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.StoreTests.test_leave_hides_roster_and_preserves_history_team_and_details",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.StoreTests.test_left_player_requires_fresh_reaction_not_bootstrap_or_nickname",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.StoreTests.test_legacy_discord_id_and_numeric_id_are_scoped_without_name_guessing",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.StoreTests.test_manual_link_preserves_name_and_departed_status",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.StoreTests.test_new_registration_duplicate_delivery_creates_one_document",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.StoreTests.test_repeated_leave_is_idempotent",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.StoreTests.test_same_name_different_team_does_not_steal_or_create_duplicate",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.StoreTests.test_same_name_other_discord_account_does_not_steal",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.StoreTests.test_unique_legacy_same_team_can_link_without_changing_team",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.StoreTests.test_unknown_and_missing_statuses_remain_active",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.StoreTests.test_unlinked_same_name_is_never_removed",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.StoreTests.test_wrong_guild_never_changes_scoped_player",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.SyncTests.test_current_role_at_restart_can_restore_registration",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.SyncTests.test_departure_during_reaction_fetch_wins",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.SyncTests.test_empty_or_wrong_guild_listing_causes_no_database_writes",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.SyncTests.test_forbidden_unknown_guild_and_network_errors_do_not_mean_departure",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.SyncTests.test_fresh_reaction_after_rejoin_restores_same_record",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.SyncTests.test_incomplete_successful_listing_does_not_hide_present_member",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.SyncTests.test_invalid_registration_team_does_not_disable_departure_handling",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.SyncTests.test_join_alone_and_restart_do_not_restore_left_player",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.SyncTests.test_new_event_invalidates_late_missing_response",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.SyncTests.test_partial_fetch_failure_causes_no_database_writes",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.SyncTests.test_raw_departure_needs_no_member_cache",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.SyncTests.test_reconcile_does_not_override_newer_event_during_rest_fetch",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.SyncTests.test_registration_role_is_optional_and_verified_again",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.SyncTests.test_restart_catches_missed_leave_via_confirmed_unknown_member",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.SyncTests.test_role_removal_does_not_erase_player_or_team",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.SyncTests.test_stale_reaction_member_is_not_reactivated_after_departure",
+      "status": "passed"
+    },
+    {
+      "name": "test_roster_sync.SyncTests.test_wrong_guild_and_bot_departures_are_ignored",
+      "status": "passed"
+    }
+  ],
+  "liveRuntimeConnected": false,
+  "deployed": false
+}
