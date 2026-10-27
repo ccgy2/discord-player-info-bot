@@ -56,6 +56,8 @@ except ValueError:
 bot = commands.Bot(command_prefix=BOT_PREFIX, intents=INTENTS, help_command=None)
 
 async def setup_hook():
+    init_firebase()
+ 
     await bot.load_extension("cogs.pdf_ai")
     await bot.load_extension("cogs.warn_system")
     await bot.load_extension("cogs.vote_check")
