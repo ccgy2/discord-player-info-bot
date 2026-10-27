@@ -9,3 +9,4 @@ google-genai
 pandas
 openpyxl
 gspread
+easyocr==1.7.2
