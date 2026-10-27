@@ -14,7 +14,7 @@ if not firebase_admin._apps:
 db = firestore.client()
 
 ALLOWED_ROLE_IDS = [
-    1468993487654355046
+    1520484338658050059
 ]
 
 ALLOWED_USER_IDS = [
