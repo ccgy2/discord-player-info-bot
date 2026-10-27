@@ -1,0 +1,62 @@
+--- a/bot.py
++++ b/bot.py
+@@ -18,7 +18,6 @@
+ from firebase_admin import credentials, firestore
+ from aiohttp import web
+ from roster_sync import FirestoreRosterStore, Identity, RosterSynchronizer, is_active_player, snowflake
+-from records_roster_bridge import start_records_roster_bridge
+ 
+ 
+ load_dotenv()
+@@ -39,7 +38,6 @@
+ ROSTER_ROLE_IDS = os.getenv("DISCORD_ROSTER_ROLE_IDS", os.getenv("DISCORD_ROSTER_ROLE_ID", ""))
+ ROSTER_SYNC_TASK = None
+ ROSTER_SYNC_SERVICE = None
+-RECORDS_ROSTER_BRIDGE = None
+ ROSTER_CONFIGURATION_LOCK = asyncio.Lock()
+ MINECRAFT_WEBHOOK_STARTED = False
+ MINECRAFT_WEB_RUNNER = None
+@@ -104,7 +102,21 @@
+ intents.members = True
+ intents.reactions = True
+ 
+-bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
++class KMBBot(commands.Bot):
++    async def setup_hook(self):
++        await super().setup_hook()
++        # The extension waits for Discord readiness in its own background task.
++        # Loading here must not wait_until_ready, which would block login.
++        if "cogs.records_roster" not in self.extensions:
++            try:
++                await self.load_extension("cogs.records_roster")
++            except Exception as exc:
++                # Keep the original bot's commands available; do not log secrets.
++                print(f"기록실 Cog 로드 보류 ({type(exc).__name__}). cogs 폴더와 RECORDS_ 설정을 확인하세요.")
++
++
++bot = KMBBot(command_prefix=PREFIX, intents=intents, help_command=None)
++bot.records_firestore = db
+ 
+ def get_bot_config_sync():
+     snapshot = CONFIG_REF.get()
+@@ -4131,7 +4143,7 @@
+ 
+ @bot.event
+ async def on_ready():
+-    global SLASH_COMMANDS_SYNCED, RECORDS_ROSTER_BRIDGE
++    global SLASH_COMMANDS_SYNCED
+     if not SLASH_COMMANDS_SYNCED:
+         for guild in bot.guilds:
+             try:
+@@ -4145,11 +4157,6 @@
+     start_firestore_watchers()
+     start_punishment_sheet_sync()
+     start_roster_membership_sync()
+-    try:
+-        RECORDS_ROSTER_BRIDGE = await start_records_roster_bridge(bot, db, RECORDS_ROSTER_BRIDGE)
+-    except Exception as exc:
+-        # Keep existing commands available and never print credentials/HTTP headers.
+-        print(f"기록실 등말소 연동 시작 보류 ({type(exc).__name__}). RECORDS_ 설정과 지정 채널 읽기 권한을 확인하세요.")
+     await start_minecraft_webhook()
+     print(f"KMB Python 봇 준비됨: {bot.user}")
+ 
