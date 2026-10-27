@@ -55,17 +55,6 @@ except ValueError:
 
 bot = commands.Bot(command_prefix=BOT_PREFIX, intents=INTENTS, help_command=None)
 
-async def setup_hook():
-    init_firebase()
- 
-    await bot.load_extension("cogs.pdf_ai")
-    await bot.load_extension("cogs.warn_system")
-    await bot.load_extension("cogs.vote_check")
-    await bot.load_extension("cogs.records_roster")
-    await bot.load_extension("cogs.automod")
-
-bot.setup_hook = setup_hook
-
 # ---------- Firebase 초기화 ----------
 def init_firebase():
     # 이미 초기화 되어 있으면 기존 client 반환
@@ -1574,9 +1563,11 @@ async def load_cogs():
 # ---------- 디스코드 기본 이벤트 ----------
 @bot.event
 async def setup_hook():
-    print("🔄 [setup_hook] 봇 로그인 전 AI 모델 및 확장 기능(Cogs) 로드를 시작합니다...")
-    # 여기서 비동기적으로 안정되게 cogs와 모델을 전부 다운로드/로드한 후 로그인을 진행합니다.
+    print("🔄 [setup_hook] Firebase 초기화 및 Cog 로딩 시작...")
+    init_firebase()
     await load_cogs()
+    await bot.tree.sync()
+    print("✅ Firebase, Cog 로딩 및 슬래시 명령 동기화 완료")
 
 @bot.event
 async def on_ready():
