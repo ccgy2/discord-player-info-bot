@@ -1,0 +1,150 @@
+{
+  "version": "player-info-low-memory-20261030-2",
+  "created_date": "2026-10-30",
+  "scope": "Cumulative changed/new files only, relative to the uploaded discord-player-info-bot-main.zip. Applies on original or first RAM-saving patch. No deletions.",
+  "input_archive_sha256": "ee002686aa74406baef65c3ee382210f909e7aa4619af909b7e73257a1a506db",
+  "previous_patch_sha256": "45d9bdf79658f8ccb9cac1a374cd4850c51e9df61268d9d2b06111503d39206a",
+  "tests": {
+    "offline_passed": 140,
+    "failed": 0,
+    "skipped": 0,
+    "live_deployment_verified": false
+  },
+  "original_data_files_preserved": 151,
+  "deleted_files": [],
+  "manifest_excludes_its_own_hash": true,
+  "files": [
+    {
+      "path": "Dockerfile",
+      "action": "modified",
+      "sha256": "90cdbadbe18d803fc4c0c5c24d219cb92d55b1a4de53fe325c185d8b241c6f31",
+      "size_bytes": 976
+    },
+    {
+      "path": "Procfile",
+      "action": "modified",
+      "sha256": "aaec5e8a41d20ae2c3b91631ed250e9135ba4994541373a963517ab96a7ef729",
+      "size_bytes": 22
+    },
+    {
+      "path": "RAILWAY_RAM_SAVING_20261030.md",
+      "action": "added",
+      "sha256": "2d9ecc961355c57db178ea31eb7293d7cbe77f37850dcc946ada5a1d30370baf",
+      "size_bytes": 10042
+    },
+    {
+      "path": "RAILWAY_RAM_SAVING_V2_20261030.md",
+      "action": "added",
+      "sha256": "10eab905511b144d44b76219fb23b148a1d0bde84e51713b0e9886164c9f5adb",
+      "size_bytes": 5212
+    },
+    {
+      "path": "TEST_REPORT_RAM_SAVING_20261030.md",
+      "action": "added",
+      "sha256": "533068c47df533b28e626da3498c814c18f659ee32f36e3f00f54574c045aad4",
+      "size_bytes": 3832
+    },
+    {
+      "path": "TEST_REPORT_RAM_SAVING_V2_20261030.md",
+      "action": "added",
+      "sha256": "f26855ed0b6ba4296d202ad9003e8448ff180cbbdafc70a876e456101091a310",
+      "size_bytes": 3539
+    },
+    {
+      "path": "bot.py",
+      "action": "modified",
+      "sha256": "6df95b414c12c1b2462cd0a6b7b3d5f9b0c2b5befc9e60d2f930bc260dea58a9",
+      "size_bytes": 89339
+    },
+    {
+      "path": "cogs/automod.py",
+      "action": "modified",
+      "sha256": "e3c647f32725439e9c64e5ce292e6153bb74b3b00f58920ffdaa9975623df2b7",
+      "size_bytes": 327159
+    },
+    {
+      "path": "cogs/pdf_ai.py",
+      "action": "modified",
+      "sha256": "73989ccb3e12308c5c152a3ace8b02e1865817e1f5ae659def14c097ed7ca6c4",
+      "size_bytes": 3905
+    },
+    {
+      "path": "cogs/player_Record.py",
+      "action": "modified",
+      "sha256": "715b4803b7ed301d6b69de3b0548627ab07385aae4e2b7546bc9be06003f2113",
+      "size_bytes": 15417
+    },
+    {
+      "path": "env.resource-saving.example",
+      "action": "added",
+      "sha256": "aa56fedeeb276c97999ffadcfd965d1821ad33cc4dfd915b008a5cf16a41fb5f",
+      "size_bytes": 547
+    },
+    {
+      "path": "resource_runtime.py",
+      "action": "added",
+      "sha256": "e3f30e699670fd593893af657fdb163e46ec652915f3c39a86413ab59c26c650",
+      "size_bytes": 13784
+    },
+    {
+      "path": "resource_workers/__init__.py",
+      "action": "added",
+      "sha256": "5086ac5dd4c5aec1accb71777fe7789b3c8396e3a1c7a4837d2af68ac5ec3ccf",
+      "size_bytes": 64
+    },
+    {
+      "path": "resource_workers/excel_job.py",
+      "action": "added",
+      "sha256": "2b40e673e8e376f79591f373c1589e406f38646e09ae48758a4550d52cb254c4",
+      "size_bytes": 4809
+    },
+    {
+      "path": "resource_workers/pdf_job.py",
+      "action": "added",
+      "sha256": "fca424071ff8d2ac9d249bc0d53f21b906970c1a0b91d7b1007d93f572e0ae28",
+      "size_bytes": 7800
+    },
+    {
+      "path": "resource_workers/protocol.py",
+      "action": "added",
+      "sha256": "5110d13971c8181045094542b56bcc82f777b52fc3a80df70869ab672a4f3842",
+      "size_bytes": 1283
+    },
+    {
+      "path": "resource_workers/record_rows.py",
+      "action": "added",
+      "sha256": "30baf3d87a6a84ba1148fc20ac84aeb7b69b0ccfbc690e1397c5837a3b54d73c",
+      "size_bytes": 3628
+    },
+    {
+      "path": "runtime.txt",
+      "action": "modified",
+      "sha256": "97f118d9a67d300b5b54d1f4afb9aafb4dd2fd0ab61e9180b1292119597fa504",
+      "size_bytes": 15
+    },
+    {
+      "path": "tests/low_memory_commands_baseline.json",
+      "action": "added",
+      "sha256": "8ee289a5166409a10bf9ac66ca44257fd3b1b74813a94276458b81f8537f4ed8",
+      "size_bytes": 23482
+    },
+    {
+      "path": "tests/resource-saving-v2-parser-measurements.json",
+      "action": "added",
+      "sha256": "ce5505b91d19025d8f6f9a18801c701195295781fa43d9f1484a95af6873f09a",
+      "size_bytes": 3504
+    },
+    {
+      "path": "tests/test_low_memory.py",
+      "action": "added",
+      "sha256": "19fb273a1c12289781312a5b39e77b507c036e645d2da9a2dbaf41695315a1a8",
+      "size_bytes": 18021
+    },
+    {
+      "path": "tests/test_more_memory_saving.py",
+      "action": "added",
+      "sha256": "9d371a3c378ec1ed6cafe32e95b26baa2ba6af4798cf64c39436ff288947251d",
+      "size_bytes": 18063
+    }
+  ]
+}

@@ -22,6 +22,9 @@ from datetime import datetime, timezone
 from typing import List, Optional, Dict
 from urllib.parse import quote_plus
 
+from resource_runtime import configure_resource_env, env_int, TTLBoolCache, message_cache_limit
+configure_resource_env()
+
 import aiohttp
 import discord
 from discord.ext import commands
@@ -55,7 +58,27 @@ try:
 except ValueError:
     DEFAULT_PITCH_POWER = raw_pitch_power
 
-bot = commands.Bot(command_prefix=BOT_PREFIX, intents=INTENTS, help_command=None)
+class ResourceBot(commands.Bot):
+    async def close(self):
+        registration = globals().get("_automod_registration_task")
+        if registration is not None and not registration.done():
+            registration.cancel()
+            await asyncio.gather(registration, return_exceptions=True)
+        try:
+            manager = getattr(self, "_resource_jobs", None)
+            if manager is not None:
+                await manager.close()
+        finally:
+            try:
+                await super().close()
+            finally:
+                await close_http_session()
+
+
+# Keep member caching/intents: voter checks and membership-dependent behavior need it.
+# AutoMod and roster edits/deletes use raw events, not Discord's message cache.
+bot = ResourceBot(command_prefix=BOT_PREFIX, intents=INTENTS, help_command=None,
+                  max_messages=message_cache_limit())
 
 # ---------- Firebase 초기화 ----------
 def init_firebase():
@@ -181,7 +204,7 @@ def update_google_sheet(match_type: str, sheet_name: str, records: list, is_pitc
 
 # ---------- HTTP session & MC cache ----------
 http_session: Optional[aiohttp.ClientSession] = None
-mc_cache: Dict[str, bool] = {}  # nickname(lower) -> bool
+mc_cache = TTLBoolCache(max_entries=1024, ttl=600)  # bounded nickname(lower) -> bool
 
 async def get_http_session() -> aiohttp.ClientSession:
     global http_session
@@ -1968,6 +1991,8 @@ async def load_cogs():
 @bot.event
 async def setup_hook():
     global db, _automod_registration_task
+    from resource_runtime import VERSION, resource_snapshot
+    print(f"[RAM 절약 버전] {VERSION}", flush=True)
     print(f"[AutoMod 패치] {AUTOMOD_SLASH_PATCH_VERSION}", flush=True)
     if db is None:
         try:
@@ -1977,6 +2002,7 @@ async def setup_hook():
             # own Firebase/canonical-counter guards on authentication failure.
             print("Firebase 초기화 실패: " + _slash_error(exc), flush=True)
     await load_cogs()
+    print("[RAM 시작 진단] " + json.dumps(resource_snapshot(), ensure_ascii=False), flush=True)
     if _automod_registration_task is None:
         _automod_registration_task = asyncio.create_task(
             _automod_register_after_ready(), name="automod-register-once")
@@ -2008,13 +2034,15 @@ async def on_command_error(ctx, error):
         await ctx.send(f"명령 실행 중 오류가 발생했습니다: `{error}`")
         print("Unhandled command error:", error)
 
-# ---------- 종료 처리 ----------
-@bot.event
-async def on_close():
-    try:
-        asyncio.create_task(close_http_session())
-    except Exception:
-        pass
+# ---------- 운영 중 메모리 진단 ----------
+@bot.command(name="자원상태")
+@commands.guild_only()
+@commands.has_permissions(administrator=True)
+@commands.cooldown(1, 10, commands.BucketType.guild)
+async def resource_status_command(ctx):
+    from resource_runtime import snapshot_text
+    await ctx.send(snapshot_text(bot), allowed_mentions=discord.AllowedMentions.none())
+
 
 # ---------- 실행 ----------
 if __name__ == "__main__":
