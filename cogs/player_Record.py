@@ -2,9 +2,12 @@ import os
 import io
 import json
 import re
+import math
 import asyncio
+from pathlib import Path
+import tempfile
+from resource_runtime import WorkerError, get_manager
 from datetime import datetime, timezone
-import pandas as pd
 import gspread
 import discord
 from discord.ext import commands
@@ -41,7 +44,8 @@ def safe_float(val) -> float:
         str_val = str(val).strip()
         if str_val.startswith('='):
             return 0.0
-        return float(str_val.replace(",", ""))
+        value = float(str_val.replace(",", ""))
+        return value if math.isfinite(value) else 0.0
     except (ValueError, TypeError):
         return 0.0
 
@@ -159,7 +163,8 @@ class PlayerRecord(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    def _parse_single_sheet(self, df: pd.DataFrame, sheet_name: str, batting_records: list, pitching_records: list, logs: list):
+    def _parse_single_sheet(self, df, sheet_name: str, batting_records: list, pitching_records: list, logs: list):
+        import pandas as pd  # Only called inside the short-lived parsing worker.
         if sheet_name in ["설명서", "펑션"]:
             return
 
@@ -246,23 +251,27 @@ class PlayerRecord(commands.Cog):
                         logs.append(f"    ❌ 투수 추출 실패 ({p_name}): {e}")
 
     async def process_excel_record(self, ctx, match_type: str, attachment: discord.Attachment):
-        file_bytes = await attachment.read()
-        batting_records = []
-        pitching_records = []
-        debug_logs = []
-        
+        maximum = 12 * 1024 * 1024
+        suffix = Path(attachment.filename).suffix.lower()
+        if suffix not in {".csv", ".xlsx", ".xlsm", ".xls", ".xlsb", ".ods"}:
+            await ctx.send("❌ CSV 또는 엑셀 파일을 첨부해주세요.")
+            return
+        if attachment.size > maximum:
+            await ctx.send("❌ 파일은 최대 12 MiB입니다. 큰 파일은 나누어 올려주세요.")
+            return
         try:
-            if attachment.filename.endswith('.csv'):
-                df = pd.read_csv(io.BytesIO(file_bytes), encoding='utf-8-sig', header=None)
-                self._parse_single_sheet(df, "CSV_FILE", batting_records, pitching_records, debug_logs)
-            else:
-                excel_file = pd.ExcelFile(io.BytesIO(file_bytes))
-                for sheet in excel_file.sheet_names:
-                    df = excel_file.parse(sheet_name=sheet, header=None)
-                    self._parse_single_sheet(df, sheet, batting_records, pitching_records, debug_logs)
-                    
-        except Exception as e:
-            await ctx.send(f"❌ 파일 분석 중 에러 발생: `{e}`")
+            async with get_manager(self.bot).slot("경기 기록 분석") as job:
+                with tempfile.TemporaryDirectory(prefix="player-excel-") as directory:
+                    path = Path(directory) / ("input" + suffix)
+                    await attachment.save(path)
+                    if path.stat().st_size > maximum:
+                        raise WorkerError("파일은 최대 12 MiB입니다.")
+                    result = await job.run("excel_job", {"path": str(path)}, timeout=180)
+            batting_records = result["batting"]
+            pitching_records = result["pitching"]
+            debug_logs = result["logs"]
+        except WorkerError as exc:
+            await ctx.send(f"❌ {exc}")
             return
 
         log_text = "\n".join(debug_logs)
@@ -316,6 +325,7 @@ class PlayerRecord(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name="기록엑셀")
+    @commands.max_concurrency(1, per=commands.BucketType.default, wait=False)
     async def record_excel_cmd(self, ctx, match_type: str = None):
         if not match_type or match_type not in ["연습경기", "리그경기"]:
             await ctx.send("❌ 사용법: `!기록엑셀 연습경기` 또는 `!기록엑셀 리그경기` (파일 첨부 필수)")

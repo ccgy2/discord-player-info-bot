@@ -1965,8 +1965,8 @@ class Engine:
 
 """Bounded, offline OCR subprocess manager; no Discord API or image downloads.
 
-One persistent child loads EasyOCR once. Decode/inference never run in the bot
-event loop. A timed-out child is killed and reaped, rather than abandoned in a
+One on-demand child loads EasyOCR per active burst and exits after idle.
+Decode/inference never run in the bot event loop. A timed-out child is killed and reaped, rather than abandoned in a
 thread. Inputs/outputs stay in memory; only the explicit installer fetches models.
 """
 
@@ -2038,17 +2038,30 @@ class OCRPool:
     """
 
     def __init__(self, model_dir: str | Path, max_queue: int = 8,
-                 timeout_seconds: float = 30):
+                 timeout_seconds: float = 30, idle_seconds: float | None = None):
         if not 1 <= max_queue <= 32 or not 0.1 <= timeout_seconds <= 120:
             raise ValueError("OCR queue must be 1–32; timeout must be 0.1–120 seconds")
         self.model_dir = Path(model_dir).expanduser().resolve()
         self.timeout_seconds = float(timeout_seconds)
+        if idle_seconds is None:
+            try:
+                idle_seconds = float(os.getenv("AUTOMOD_OCR_IDLE_SECONDS", "0"))
+            except ValueError:
+                idle_seconds = 0.0
+        if not math.isfinite(idle_seconds):
+            idle_seconds = 0.0
+        # -1 keeps the old persistent worker; 0 releases promptly after work.
+        self.idle_seconds = max(-1.0, min(3600.0, float(idle_seconds)))
+        self._last_used = time.monotonic()
+        self._activity = asyncio.Event()
+        self._idle_task: asyncio.Task | None = None
         self.startup_timeout_seconds = 120.0
         self.restart_cooldown_seconds = 60.0
         self.restart_window_seconds = 300.0
         self.max_starts_per_window = 3
         self._queue: asyncio.Queue[_Job] = asyncio.Queue(maxsize=max_queue)
         self._proc: asyncio.subprocess.Process | None = None
+        self._heavy_lease = None
         self._runner: asyncio.Task | None = None
         self._startup_task: asyncio.Task | None = None
         self._process_lock = asyncio.Lock()
@@ -2075,14 +2088,23 @@ class OCRPool:
     def health(self) -> dict[str, Any]:
         return {
             "ready": self.ready, "state": self._state, "detail": self._detail,
+            "idle_seconds": self.idle_seconds,
             "queue_size": self._queue.qsize(), "queue_limit": self._queue.maxsize,
             "worker_pid": self._proc.pid if self._proc and self._proc.returncode is None else None,
             "cooldown_seconds": max(0, math.ceil(self._cooldown_until - time.monotonic())),
         }
 
-    async def start(self) -> bool:
+    async def start(self, *, eager: bool = True) -> bool:
         if self._closed:
             return False
+        if self._idle_task is None or self._idle_task.done():
+            self._idle_task = asyncio.create_task(self._release_when_idle(), name="automod-ocr-idle")
+        if not eager:
+            if self._state == "not_started":
+                self._state, self._detail = "standby", "절약 대기: 이미지가 들어오면 OCR 모델을 로드합니다."
+            if self._runner is None or self._runner.done():
+                self._runner = asyncio.create_task(self._run(), name="automod-ocr-queue")
+            return self.ready
         if self._startup_task is None or self._startup_task.done():
             self._startup_task = asyncio.create_task(self._start_locked(), name="automod-ocr-start")
         try:
@@ -2094,6 +2116,40 @@ class OCRPool:
         if not self._closed and (self._runner is None or self._runner.done()):
             self._runner = asyncio.create_task(self._run(), name="automod-ocr-queue")
         return ready
+
+    def _touch(self) -> None:
+        self._last_used = time.monotonic()
+        self._activity.set()
+
+    async def _release_when_idle(self) -> None:
+        while not self._closed:
+            self._activity.clear()
+            pending = bool(self._heavy_lease and self._heavy_lease.gate.waiters)
+            delay = None
+            if self.ready and pending:
+                delay = 0.05
+            elif self.ready and self.idle_seconds >= 0:
+                delay = max(0.05, self.idle_seconds - (time.monotonic() - self._last_used))
+            try:
+                if delay is None:
+                    await self._activity.wait()
+                else:
+                    await asyncio.wait_for(self._activity.wait(), timeout=delay)
+                continue
+            except asyncio.TimeoutError:
+                pass
+            async with self._process_lock:
+                pending = bool(self._heavy_lease and self._heavy_lease.gate.waiters)
+                idle = (self.idle_seconds >= 0 and self._queue.empty()
+                        and time.monotonic() - self._last_used >= self.idle_seconds)
+                if self.ready and (pending or idle):
+                    await self._standby()
+
+    async def _standby(self) -> None:
+        await self._stop_process()
+        # Intentional idle/slot handovers are not crash/restart failures.
+        self._starts.clear()
+        self._state, self._detail = "standby", "절약 대기: OCR 작업 종료 후 모델 메모리를 반환했습니다."
 
     async def _start_locked(self) -> bool:
         async with self._process_lock:
@@ -2117,11 +2173,22 @@ class OCRPool:
         await self._stop_process()
         if self._closed:
             return False
-        self._starts.append(now)
-        self._state, self._detail = "starting", "OCR 한국어·영어 CPU 모델 초기화 중"
+        self._state, self._detail = "waiting", "PDF·엑셀 작업과 메모리가 겹치지 않도록 순서를 기다리는 중"
         env = dict(os.environ)
-        env.update({"PYTHONUNBUFFERED": "1", "OMP_NUM_THREADS": "2", "MKL_NUM_THREADS": "2"})
+        env.update({"PYTHONUNBUFFERED": "1", "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1"})
         try:
+            from resource_runtime import get_heavy_gate
+            try:
+                self._heavy_lease = await get_heavy_gate().acquire(
+                    "OCR", timeout=self.startup_timeout_seconds, on_waiter=self._activity.set)
+            except TimeoutError:
+                self._state, self._detail = "standby", "다른 분석 작업이 진행 중이어서 OCR 대기 시간이 초과됨; 검사 완료가 아닙니다."
+                return False
+            if self._closed:
+                await self._stop_process()
+                return False
+            self._starts.append(time.monotonic())
+            self._state, self._detail = "starting", "OCR 한국어·영어 CPU 모델 초기화 중"
             self._proc = await asyncio.create_subprocess_exec(
                 sys.executable, str(_SINGLE_FILE), "--ocr-worker", "--model-dir", str(self.model_dir),
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
@@ -2136,6 +2203,7 @@ class OCRPool:
                 await self._unavailable(detail)
                 return False
             self._ready, self._state, self._detail = True, "ready", "한국어·영어 CPU OCR 준비 완료"
+            self._touch()
             return True
         except asyncio.CancelledError:
             await self._stop_process()
@@ -2147,15 +2215,19 @@ class OCRPool:
     async def _stop_process(self) -> None:
         proc, self._proc = self._proc, None
         self._ready = False
-        if proc is None:
-            return
-        if proc.returncode is None:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-        # The child is always reaped, including timeout, cancellation and unload.
-        await proc.wait()
+        try:
+            if proc is not None:
+                if proc.returncode is None:
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+                # Reap before releasing the shared slot: never overlap models.
+                await proc.wait()
+        finally:
+            if self._heavy_lease is not None:
+                self._heavy_lease.release()
+                self._heavy_lease = None
 
     async def _unavailable(self, detail: str) -> None:
         await self._stop_process()
@@ -2196,11 +2268,15 @@ class OCRPool:
             try:
                 if job.future.cancelled():
                     continue
-                if time.monotonic() - job.queued_at > self.timeout_seconds:
+                if time.monotonic() - job.queued_at > self.timeout_seconds + self.startup_timeout_seconds:
                     result = OCRResult("timeout", detail="OCR 대기 시간 초과", sha256=job.digest)
                 else:
                     async with self._process_lock:
                         result = await self._perform(job)
+                        self._touch()
+                        pending = bool(self._heavy_lease and self._heavy_lease.gate.waiters)
+                        if self.ready and (pending or (self.idle_seconds == 0 and self._queue.empty())):
+                            await self._standby()
                 if not job.future.done():
                     job.future.set_result(result)
             except asyncio.CancelledError:
@@ -2235,11 +2311,16 @@ class OCRPool:
         proc = self._proc
         if proc is None or proc.stdin is None or proc.stdout is None:
             raise OSError("OCR process unavailable")
-        request = {
-            "data": base64.b64encode(job.data).decode("ascii"),
-            "filename": job.filename, "mime": job.mime,
-        }
-        proc.stdin.write(json.dumps(request, ensure_ascii=True).encode("utf-8") + b"\n")
+        # Keep the existing JSON-lines protocol without three full-size copies
+        # of an 8 MiB image in the resident bot. A 3-byte-aligned chunk preserves
+        # the exact base64 encoding when all chunks are concatenated.
+        proc.stdin.write(b'{"data":"')
+        view = memoryview(job.data)
+        for offset in range(0, len(view), 48 * 1024):
+            proc.stdin.write(base64.b64encode(view[offset:offset + 48 * 1024]))
+            await proc.stdin.drain()
+        metadata = json.dumps({"filename": job.filename, "mime": job.mime}, ensure_ascii=True).encode("utf-8")
+        proc.stdin.write(b'",' + metadata[1:] + b"\n")
         await proc.stdin.drain()
         raw = await proc.stdout.readline()
         if not raw:
@@ -2250,7 +2331,7 @@ class OCRPool:
         if self._closed:
             return
         self._closed = True
-        tasks = [task for task in (self._startup_task, self._runner) if task and not task.done()]
+        tasks = [task for task in (self._startup_task, self._runner, self._idle_task) if task and not task.done()]
         for task in tasks:
             task.cancel()
         if tasks:
@@ -2445,7 +2526,7 @@ def _ocr_worker_main(argv: list[str] | None = None) -> int:
             import numpy as np
             import easyocr
 
-            torch.set_num_threads(2)
+            torch.set_num_threads(1)
             torch.set_num_interop_threads(1)
             reader = easyocr.Reader(
                 ["ko", "en"], gpu=False, model_storage_directory=str(model_dir),
@@ -2510,7 +2591,7 @@ def _install_models_main(argv: list[str] | None = None) -> int:
         import easyocr
 
         model_dir.mkdir(parents=True, exist_ok=True)
-        torch.set_num_threads(2)
+        torch.set_num_threads(1)
         reader = easyocr.Reader(
             ["ko", "en"], gpu=False, model_storage_directory=str(model_dir),
             user_network_directory=str(model_dir / "user_network"),
@@ -5747,8 +5828,11 @@ class AutoMod(commands.Cog):
 
     async def _start_ocr(self) -> None:
         try:
-            ready = await self.ocr.start()
-            if not ready:
+            eager = os.getenv("AUTOMOD_OCR_EAGER", "false").lower() in ("1", "true", "yes", "on")
+            ready = await self.ocr.start(eager=eager)
+            if self.ocr.readiness == "standby":
+                LOGGER.info("AutoMod OCR standby: model loads on demand; idle release %.1fs", self.ocr.idle_seconds)
+            elif not ready:
                 LOGGER.error('AutoMod OCR not ready: %s', self.ocr.last_error)
         except asyncio.CancelledError:
             raise
@@ -6279,6 +6363,9 @@ class AutoMod(commands.Cog):
                 log_ok = perms.view_channel and perms.send_messages and perms.read_message_history and perms.embed_links
                 lines.append('로그 보기/전송/기록/임베드: ' + ('정상' if log_ok else '권한 필요'))
                 good = bool(good and private and log_ok)
+            # An explicit permission/setup check validates the real model.
+            # Standby itself must never be claimed as proof of working OCR.
+            await self.ocr.start()
             lines.append('OCR: ' + ('준비됨(CPU ko+en)' if self.ocr.ready else f'준비 안 됨 · {self.ocr.last_error}'))
             good = bool(good and self.ocr.ready)
             lines.append('일반 채널·스레드의 개별 권한과 대상 역할 계층은 사건 처리 직전에 다시 검사합니다.')
@@ -6468,7 +6555,10 @@ class AutoMod(commands.Cog):
     @automatic.command(name='이미지검사', description='첨부 이미지의 로컬 OCR 검사를 켜거나 끕니다')
     async def image_setting(self, interaction: discord.Interaction, 사용: Literal['켜기', '끄기']) -> None:
         if 사용 == '켜기' and not self.ocr.ready:
-            raise ValueError('OCR 모델이 준비되지 않았습니다. 설치 스크립트와 상태를 확인하세요.')
+            # A sleeping worker is not a broken worker. Validate it on demand
+            # before enabling inspection; failed startup must still reject it.
+            if not await self.ocr.start():
+                raise ValueError('OCR 모델을 확인하지 못했습니다. 설치 스크립트와 상태를 확인하세요.')
         await self._change(interaction, image_enabled=사용 == '켜기')
         await respond(interaction, f'이미지 OCR: {사용}. 텍스트 설정은 유지됩니다.')
 
