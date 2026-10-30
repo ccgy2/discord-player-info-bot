@@ -1,0 +1,124 @@
+{
+  "scope": "Parser-only, not complete bot; previous callback AST-extracted to exclude Discord/gspread imports. Python -S prevents host sitecustomize preloading pandas. Peak RSS uses Linux /proc/self/status VmHWM because getrusage ru_maxrss in this host retains the large pre-exec parent watermark. No production billing measurement.",
+  "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+  "fixture_rows": 5006,
+  "records": 5000,
+  "runs": [
+    {
+      "format": "csv",
+      "version": "previous",
+      "median_peak_rss_mib": 59.15625,
+      "median_seconds": 0.4199643040000183,
+      "samples": [
+        {
+          "peak_rss_mib": 59.1640625,
+          "elapsed_seconds": 0.4199643040000183,
+          "batting": 4000,
+          "pitching": 1000,
+          "pandas_loaded": true
+        },
+        {
+          "peak_rss_mib": 59.15625,
+          "elapsed_seconds": 0.4100768450000487,
+          "batting": 4000,
+          "pitching": 1000,
+          "pandas_loaded": true
+        },
+        {
+          "peak_rss_mib": 59.15625,
+          "elapsed_seconds": 0.442140376999987,
+          "batting": 4000,
+          "pitching": 1000,
+          "pandas_loaded": true
+        }
+      ]
+    },
+    {
+      "format": "csv",
+      "version": "v2",
+      "median_peak_rss_mib": 11.3828125,
+      "median_seconds": 0.027060258000005888,
+      "samples": [
+        {
+          "peak_rss_mib": 11.38671875,
+          "elapsed_seconds": 0.027060258000005888,
+          "batting": 4000,
+          "pitching": 1000,
+          "pandas_loaded": false
+        },
+        {
+          "peak_rss_mib": 11.37890625,
+          "elapsed_seconds": 0.028535623000038868,
+          "batting": 4000,
+          "pitching": 1000,
+          "pandas_loaded": false
+        },
+        {
+          "peak_rss_mib": 11.3828125,
+          "elapsed_seconds": 0.025243158999955995,
+          "batting": 4000,
+          "pitching": 1000,
+          "pandas_loaded": false
+        }
+      ]
+    },
+    {
+      "format": "xlsx",
+      "version": "previous",
+      "median_peak_rss_mib": 70.1015625,
+      "median_seconds": 0.7805299999999988,
+      "samples": [
+        {
+          "peak_rss_mib": 70.09375,
+          "elapsed_seconds": 0.7805299999999988,
+          "batting": 4000,
+          "pitching": 1000,
+          "pandas_loaded": true
+        },
+        {
+          "peak_rss_mib": 70.19921875,
+          "elapsed_seconds": 0.7760915169999407,
+          "batting": 4000,
+          "pitching": 1000,
+          "pandas_loaded": true
+        },
+        {
+          "peak_rss_mib": 70.1015625,
+          "elapsed_seconds": 0.8488326519999418,
+          "batting": 4000,
+          "pitching": 1000,
+          "pandas_loaded": true
+        }
+      ]
+    },
+    {
+      "format": "xlsx",
+      "version": "v2",
+      "median_peak_rss_mib": 39.203125,
+      "median_seconds": 0.45754317199998695,
+      "samples": [
+        {
+          "peak_rss_mib": 39.203125,
+          "elapsed_seconds": 0.45754317199998695,
+          "batting": 4000,
+          "pitching": 1000,
+          "pandas_loaded": false
+        },
+        {
+          "peak_rss_mib": 39.19921875,
+          "elapsed_seconds": 0.448509649000016,
+          "batting": 4000,
+          "pitching": 1000,
+          "pandas_loaded": false
+        },
+        {
+          "peak_rss_mib": 39.20703125,
+          "elapsed_seconds": 0.5062636569999768,
+          "batting": 4000,
+          "pitching": 1000,
+          "pandas_loaded": false
+        }
+      ]
+    }
+  ]
+}

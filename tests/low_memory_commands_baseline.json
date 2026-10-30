@@ -1,0 +1,375 @@
+{
+  "bot.py": [
+    {
+      "name": "help",
+      "function": "help_cmd",
+      "args": "arguments(args=[arg(arg='ctx')])"
+    },
+    {
+      "name": "도움",
+      "function": "help_kor",
+      "args": "arguments(args=[arg(arg='ctx')])"
+    },
+    {
+      "name": "도움말",
+      "function": "help_kor2",
+      "args": "arguments(args=[arg(arg='ctx')])"
+    },
+    {
+      "name": "정보",
+      "function": "info_cmd",
+      "args": "arguments(args=[arg(arg='ctx'), arg(arg='nick', annotation=Name(id='str', ctx=Load()))])"
+    },
+    {
+      "name": "정보상세",
+      "function": "info_detail_cmd",
+      "args": "arguments(args=[arg(arg='ctx'), arg(arg='nick', annotation=Name(id='str', ctx=Load()))])"
+    },
+    {
+      "name": "추가",
+      "function": "add_one_cmd",
+      "args": "arguments(args=[arg(arg='ctx')], kwonlyargs=[arg(arg='payload', annotation=Name(id='str', ctx=Load()))], kw_defaults=[None])"
+    },
+    {
+      "name": "등록",
+      "function": "bulk_register_cmd",
+      "args": "arguments(args=[arg(arg='ctx')], kwonlyargs=[arg(arg='bulk_text', annotation=Name(id='str', ctx=Load()))], kw_defaults=[Constant(value=None)])"
+    },
+    {
+      "name": "가져오기파일",
+      "function": "import_file_cmd",
+      "args": "arguments(args=[arg(arg='ctx')], kwonlyargs=[arg(arg='args', annotation=Name(id='str', ctx=Load()))], kw_defaults=[Constant(value='')])"
+    },
+    {
+      "name": "닉변",
+      "function": "nickchange_cmd",
+      "args": "arguments(args=[arg(arg='ctx'), arg(arg='oldnick', annotation=Name(id='str', ctx=Load())), arg(arg='newnick', annotation=Name(id='str', ctx=Load()))])"
+    },
+    {
+      "name": "수정",
+      "function": "edit_cmd",
+      "args": "arguments(args=[arg(arg='ctx')], kwonlyargs=[arg(arg='payload', annotation=Name(id='str', ctx=Load()))], kw_defaults=[None])"
+    },
+    {
+      "name": "이적",
+      "function": "transfer_cmd",
+      "args": "arguments(args=[arg(arg='ctx'), arg(arg='nick', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[arg(arg='newteam', annotation=Name(id='str', ctx=Load()))], kw_defaults=[None])"
+    },
+    {
+      "name": "영입",
+      "function": "recruit_cmd",
+      "args": "arguments(args=[arg(arg='ctx'), arg(arg='nick', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[arg(arg='teamname', annotation=Name(id='str', ctx=Load()))], kw_defaults=[None])"
+    },
+    {
+      "name": "구종삭제",
+      "function": "remove_pitch_cmd",
+      "args": "arguments(args=[arg(arg='ctx'), arg(arg='nick', annotation=Name(id='str', ctx=Load())), arg(arg='pitch', annotation=Name(id='str', ctx=Load()))])"
+    },
+    {
+      "name": "팀",
+      "function": "team_cmd",
+      "args": "arguments(args=[arg(arg='ctx')], kwonlyargs=[arg(arg='teamname', annotation=Name(id='str', ctx=Load()))], kw_defaults=[None])"
+    },
+    {
+      "name": "팀삭제",
+      "function": "delete_team_cmd",
+      "args": "arguments(args=[arg(arg='ctx')], kwonlyargs=[arg(arg='teamname', annotation=Name(id='str', ctx=Load()))], kw_defaults=[None])"
+    },
+    {
+      "name": "목록",
+      "function": "list_cmd",
+      "args": "arguments(args=[arg(arg='ctx'), arg(arg='kind', annotation=Name(id='str', ctx=Load()))], defaults=[Constant(value='players')])"
+    },
+    {
+      "name": "트레이드",
+      "function": "trade_cmd",
+      "args": "arguments(args=[arg(arg='ctx'), arg(arg='nick1', annotation=Name(id='str', ctx=Load())), arg(arg='nick2', annotation=Name(id='str', ctx=Load()))])"
+    },
+    {
+      "name": "웨이버",
+      "function": "waiver_cmd",
+      "args": "arguments(args=[arg(arg='ctx'), arg(arg='nick', annotation=Name(id='str', ctx=Load()))])"
+    },
+    {
+      "name": "방출",
+      "function": "release_cmd",
+      "args": "arguments(args=[arg(arg='ctx'), arg(arg='nick', annotation=Name(id='str', ctx=Load()))])"
+    },
+    {
+      "name": "삭제",
+      "function": "delete_cmd",
+      "args": "arguments(args=[arg(arg='ctx'), arg(arg='nick', annotation=Name(id='str', ctx=Load()))])"
+    },
+    {
+      "name": "기록추가타자",
+      "function": "add_batting_cmd",
+      "args": "arguments(args=[arg(arg='ctx'), arg(arg='nick', annotation=Name(id='str', ctx=Load())), arg(arg='date', annotation=Name(id='str', ctx=Load())), arg(arg='PA', annotation=Name(id='int', ctx=Load())), arg(arg='AB', annotation=Name(id='int', ctx=Load())), arg(arg='R', annotation=Name(id='int', ctx=Load())), arg(arg='H', annotation=Name(id='int', ctx=Load())), arg(arg='RBI', annotation=Name(id='int', ctx=Load())), arg(arg='HR', annotation=Name(id='int', ctx=Load())), arg(arg='SB', annotation=Name(id='int', ctx=Load()))])"
+    },
+    {
+      "name": "기록추가투수",
+      "function": "add_pitching_cmd",
+      "args": "arguments(args=[arg(arg='ctx'), arg(arg='nick', annotation=Name(id='str', ctx=Load())), arg(arg='date', annotation=Name(id='str', ctx=Load())), arg(arg='IP', annotation=Name(id='float', ctx=Load())), arg(arg='H', annotation=Name(id='int', ctx=Load())), arg(arg='R', annotation=Name(id='int', ctx=Load())), arg(arg='ER', annotation=Name(id='int', ctx=Load())), arg(arg='BB', annotation=Name(id='int', ctx=Load())), arg(arg='SO', annotation=Name(id='int', ctx=Load()))])"
+    },
+    {
+      "name": "기록보기",
+      "function": "view_records_cmd",
+      "args": "arguments(args=[arg(arg='ctx'), arg(arg='nick', annotation=Name(id='str', ctx=Load()))])"
+    },
+    {
+      "name": "기록리셋",
+      "function": "reset_records_cmd",
+      "args": "arguments(args=[arg(arg='ctx'), arg(arg='nick', annotation=Name(id='str', ctx=Load())), arg(arg='typ', annotation=Name(id='str', ctx=Load()))])"
+    },
+    {
+      "name": "자동관리등록",
+      "function": "automod_register_command",
+      "args": "arguments(args=[arg(arg='ctx')])"
+    },
+    {
+      "name": "자동관리점검",
+      "function": "automod_registration_status_command",
+      "args": "arguments(args=[arg(arg='ctx')])"
+    },
+    {
+      "name": "자동관리저장점검",
+      "function": "automod_storage_diagnostic_command",
+      "args": "arguments(args=[arg(arg='ctx')])"
+    }
+  ],
+  "cogs/automod.py": [
+    {
+      "name": "로그생성",
+      "function": "create_log",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='운영역할', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Role', ctx=Load())), arg(arg='이름', annotation=Name(id='str', ctx=Load()))], defaults=[Constant(value='관리로그')])"
+    },
+    {
+      "name": "설정",
+      "function": "configure_existing",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='로그채널', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='TextChannel', ctx=Load())), arg(arg='운영역할', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Role', ctx=Load()))])"
+    },
+    {
+      "name": "상태",
+      "function": "status",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load()))])"
+    },
+    {
+      "name": "저장상태",
+      "function": "storage_status",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load()))])"
+    },
+    {
+      "name": "연결점검",
+      "function": "connection_check",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load()))])"
+    },
+    {
+      "name": "로그재시도",
+      "function": "retry_log",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='사건', annotation=Name(id='str', ctx=Load()))])"
+    },
+    {
+      "name": "모드",
+      "function": "mode",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='값', annotation=Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='적용'), Constant(value='관찰'), Constant(value='끄기')], ctx=Load()), ctx=Load()))])"
+    },
+    {
+      "name": "권한점검",
+      "function": "permissions",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load()))])"
+    },
+    {
+      "name": "처벌설정",
+      "function": "punishment",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='경고횟수', annotation=BinOp(left=Subscript(value=Attribute(value=Name(id='app_commands', ctx=Load()), attr='Range', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Constant(value=0), Constant(value=100)], ctx=Load()), ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='타임아웃', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None)))], defaults=[Constant(value=None), Constant(value=None)])"
+    },
+    {
+      "name": "처벌확인",
+      "function": "punishment_status",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load()))])"
+    },
+    {
+      "name": "이미지검사",
+      "function": "image_setting",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='사용', annotation=Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='켜기'), Constant(value='끄기')], ctx=Load()), ctx=Load()))])"
+    },
+    {
+      "name": "공개안내",
+      "function": "public_notice",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='사용', annotation=Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='켜기'), Constant(value='끄기')], ctx=Load()), ctx=Load())), arg(arg='삭제초', annotation=Subscript(value=Attribute(value=Name(id='app_commands', ctx=Load()), attr='Range', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Constant(value=5), Constant(value=300)], ctx=Load()), ctx=Load())), arg(arg='쿨다운초', annotation=Subscript(value=Attribute(value=Name(id='app_commands', ctx=Load()), attr='Range', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Constant(value=1), Constant(value=86400)], ctx=Load()), ctx=Load()))], defaults=[Constant(value=15), Constant(value=60)])"
+    },
+    {
+      "name": "보관기간",
+      "function": "retention",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='일수', annotation=Subscript(value=Attribute(value=Name(id='app_commands', ctx=Load()), attr='Range', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Constant(value=1), Constant(value=3650)], ctx=Load()), ctx=Load()))])"
+    },
+    {
+      "name": "증거보관",
+      "function": "originals",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='사용', annotation=Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='켜기'), Constant(value='끄기')], ctx=Load()), ctx=Load()))])"
+    },
+    {
+      "name": "만료정리",
+      "function": "purge",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load()))])"
+    },
+    {
+      "name": "시간대",
+      "function": "timezone_setting",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='시간대', annotation=Name(id='str', ctx=Load()))], defaults=[Constant(value='Asia/Seoul')])"
+    },
+    {
+      "name": "운영역할",
+      "function": "operator_role",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='작업', annotation=Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='추가'), Constant(value='삭제')], ctx=Load()), ctx=Load())), arg(arg='역할', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Role', ctx=Load()))])"
+    },
+    {
+      "name": "분류",
+      "function": "category",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='분류', annotation=Subscript(value=Attribute(value=Name(id='app_commands', ctx=Load()), attr='Choice', ctx=Load()), slice=Name(id='str', ctx=Load()), ctx=Load())), arg(arg='설정', annotation=Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='적용'), Constant(value='검토'), Constant(value='끄기')], ctx=Load()), ctx=Load()))])"
+    },
+    {
+      "name": "채널",
+      "function": "exempt_channel",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='작업', annotation=Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='추가'), Constant(value='삭제')], ctx=Load()), ctx=Load())), arg(arg='채널', annotation=BinOp(left=BinOp(left=Attribute(value=Name(id='discord', ctx=Load()), attr='TextChannel', ctx=Load()), op=BitOr(), right=Attribute(value=Name(id='discord', ctx=Load()), attr='Thread', ctx=Load())), op=BitOr(), right=Attribute(value=Name(id='discord', ctx=Load()), attr='ForumChannel', ctx=Load())))])"
+    },
+    {
+      "name": "역할",
+      "function": "exempt_role",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='작업', annotation=Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='추가'), Constant(value='삭제')], ctx=Load()), ctx=Load())), arg(arg='역할', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Role', ctx=Load()))])"
+    },
+    {
+      "name": "추가",
+      "function": "add_rule",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='표현', annotation=Subscript(value=Attribute(value=Name(id='app_commands', ctx=Load()), attr='Range', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Constant(value=2), Constant(value=64)], ctx=Load()), ctx=Load())), arg(arg='분류', annotation=Subscript(value=Attribute(value=Name(id='app_commands', ctx=Load()), attr='Choice', ctx=Load()), slice=Name(id='str', ctx=Load()), ctx=Load())), arg(arg='일치방식', annotation=Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='단어'), Constant(value='제한우회'), Constant(value='문자열')], ctx=Load()), ctx=Load())), arg(arg='판단', annotation=Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='검토'), Constant(value='공격대상확인'), Constant(value='표현금지')], ctx=Load()), ctx=Load()))], defaults=[Constant(value='검토')])"
+    },
+    {
+      "name": "삭제",
+      "function": "disable_rule",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='규칙id', annotation=Name(id='str', ctx=Load()))])"
+    },
+    {
+      "name": "복원",
+      "function": "restore_rule",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='규칙id', annotation=Name(id='str', ctx=Load()))])"
+    },
+    {
+      "name": "목록",
+      "function": "list_rules",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='페이지', annotation=Subscript(value=Attribute(value=Name(id='app_commands', ctx=Load()), attr='Range', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Constant(value=1), Constant(value=100)], ctx=Load()), ctx=Load()))], defaults=[Constant(value=1)])"
+    },
+    {
+      "name": "추가",
+      "function": "add_allow",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='표현', annotation=Subscript(value=Attribute(value=Name(id='app_commands', ctx=Load()), attr='Range', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Constant(value=2), Constant(value=80)], ctx=Load()), ctx=Load()))])"
+    },
+    {
+      "name": "삭제",
+      "function": "remove_allow",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='표현', annotation=Name(id='str', ctx=Load()))])"
+    },
+    {
+      "name": "목록",
+      "function": "list_allow",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load()))])"
+    },
+    {
+      "name": "필터테스트",
+      "function": "filter_test",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='문장', annotation=Subscript(value=Attribute(value=Name(id='app_commands', ctx=Load()), attr='Range', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Constant(value=1), Constant(value=4000)], ctx=Load()), ctx=Load()))])"
+    },
+    {
+      "name": "이미지테스트",
+      "function": "image_test",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='파일', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Attachment', ctx=Load()))])"
+    },
+    {
+      "name": "조회",
+      "function": "violation_list",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='사용자', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Member', ctx=Load()))])"
+    },
+    {
+      "name": "사건",
+      "function": "incident",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='사건', annotation=Name(id='str', ctx=Load()))])"
+    },
+    {
+      "name": "취소",
+      "function": "cancel_violation",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='사건', annotation=Name(id='str', ctx=Load())), arg(arg='사유', annotation=Subscript(value=Attribute(value=Name(id='app_commands', ctx=Load()), attr='Range', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Constant(value=1), Constant(value=300)], ctx=Load()), ctx=Load()))])"
+    },
+    {
+      "name": "초기화",
+      "function": "reset_violation",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='interaction', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Interaction', ctx=Load())), arg(arg='사용자', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Member', ctx=Load())), arg(arg='사유', annotation=Subscript(value=Attribute(value=Name(id='app_commands', ctx=Load()), attr='Range', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Constant(value=1), Constant(value=300)], ctx=Load()), ctx=Load()))])"
+    }
+  ],
+  "cogs/pdf_ai.py": [
+    {
+      "name": "pdf등록",
+      "function": "upload_pdf",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='ctx')])"
+    },
+    {
+      "name": "질문",
+      "function": "ask",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='ctx')], kwonlyargs=[arg(arg='question')], kw_defaults=[None])"
+    },
+    {
+      "name": "조문",
+      "function": "article",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='ctx'), arg(arg='number', annotation=Name(id='str', ctx=Load()))])"
+    },
+    {
+      "name": "pdf목록",
+      "function": "list_pdf",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='ctx')])"
+    }
+  ],
+  "cogs/player_Record.py": [
+    {
+      "name": "기록엑셀",
+      "function": "record_excel_cmd",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='ctx'), arg(arg='match_type', annotation=Name(id='str', ctx=Load()))], defaults=[Constant(value=None)])"
+    }
+  ],
+  "cogs/records_roster.py": [],
+  "cogs/vote_check.py": [
+    {
+      "name": "투표생성",
+      "function": "투표생성",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='ctx'), arg(arg='제목')], vararg=arg(arg='항목'))"
+    },
+    {
+      "name": "미참여자",
+      "function": "미참여자",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='ctx'), arg(arg='message_id', annotation=Name(id='int', ctx=Load()))])"
+    }
+  ],
+  "cogs/warn_system.py": [
+    {
+      "name": "확인",
+      "function": "warn_check",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='ctx'), arg(arg='member', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Member', ctx=Load()))], defaults=[Constant(value=None)])"
+    },
+    {
+      "name": "차감",
+      "function": "warn_remove",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='ctx'), arg(arg='member', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Member', ctx=Load()))])"
+    },
+    {
+      "name": "초기화",
+      "function": "warn_reset",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='ctx'), arg(arg='member', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='Member', ctx=Load()))])"
+    },
+    {
+      "name": "채널",
+      "function": "warn_channel",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='ctx'), arg(arg='channel', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='TextChannel', ctx=Load()))])"
+    },
+    {
+      "name": "로그",
+      "function": "warn_log",
+      "args": "arguments(args=[arg(arg='self'), arg(arg='ctx'), arg(arg='channel', annotation=Attribute(value=Name(id='discord', ctx=Load()), attr='TextChannel', ctx=Load()))])"
+    }
+  ]
+}
