@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""기존 bot.py에 넣는 단일 파일 등말소 Cog · v5.4.2-single.1
+"""기존 bot.py에 넣는 단일 파일 등말소 Cog · v5.4.2-low-usage.1
 
 저장 위치: cogs/records_roster.py
 - 보조 .py / _records_roster 폴더가 필요 없는 단일 파일입니다.
@@ -21,6 +21,29 @@
 - 민감한 서비스 계정 키/봇 토큰을 이 파일에 적거나 공개 저장소에 올리지 마세요.
 - 오프라인 회귀/모의 API 검사용으로 확인한 코드입니다. 이 제공 과정에서
   운영 Firebase 로그인·실제 역할 변경·실제 서버 배포는 실행하지 않았습니다.
+
+절약 기본값 (추가 파일/환경변수 없이 적용, 기능을 끄지 않습니다):
+- 새 글/수정/삭제 이벤트와 승인 전 원문 재조회는 유지합니다.
+- 웹 원문 확인 요청은 기존처럼 15초마다 확인합니다.
+- 유휴 역할 작업 확인: 15→30→60초. 원문 확인 요청 때는 2분간 빠른 확인.
+- 누락 글 보충: 5분마다, 재연결 후에는 바로 다음 검사에서 확인합니다.
+- 최근 원문 보충 검사: 10분마다 최대 10개 (기존 매분 최대 20개).
+  이벤트를 놓친 수정/삭제의 자동 발견은 늦어질 수 있습니다.
+  최근 100개가 고정된 경우 전체 보충 순환은 약 100분입니다.
+- 상태 heartbeat는 30초 간격, 오류 상태 변경은 다음 보고 시 즉시 기록합니다.
+- Firestore 동시 작업 최대 2개. 취소된 호출도 실제 스레드 종료까지 슬롯 유지.
+- 중복 원문 캐시: 최대 128개, 10분. 본문/멤버/Message 객체는 보관하지 않습니다.
+  웹 승인 전 확인·정기 원문 재조회는 이 캐시를 절대로 사용하지 않습니다.
+- 이 코그는 AI 모델을 상주시킨 코드가 아닙니다. 절감 대상은 반복 I/O와
+  임시 메모리이며, 봇 전체 RAM/실제 청구액의 감소율을 보장하지 않습니다.
+선택 설정 (정수, 환경변수가 없으면 위 기본값):
+ RECORDS_ROLE_IDLE_SECONDS=60 (15~300)
+ RECORDS_HISTORY_POLL_SECONDS=300 (15~3600)
+ RECORDS_RECENT_REFRESH_SECONDS=600 (60~86400)
+ RECORDS_RECENT_BATCH=10 (1~20)
+ RECORDS_DB_CONCURRENCY=2 (1~4)
+ RECORDS_DEDUP_ENTRIES=128 (0~512, 0이면 끔)
+ RECORDS_DEDUP_SECONDS=600 (0~3600, 0이면 끔)
 
 추가 설정이 필요한 경우(환경변수 우선):
  RECORDS_BRIDGE_ENABLED=true/false
@@ -46,6 +69,7 @@ import os
 import re
 import secrets
 import sys
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -58,7 +82,7 @@ RECORDS_PROJECT_ID = ""   # 빈칸: 기존 초기화된 Firebase 프로젝트가
 RECORDS_SITE_ID = ""      # 빈칸: 기존 DB의 SST/KMB meta/site가 정확히 하나일 때 선택
 FIREBASE_APP_NAME = "[DEFAULT]"
 STARTUP_RETRY_SECONDS = 60
-COG_VERSION = "5.4.2-single.1"
+COG_VERSION = "5.4.2-low-usage.1"
 LOGGER = logging.getLogger(__name__)
 
 # ═══════════════ 승인된 군 역할 변경 · 기존 v5.4.2 프로토콜 ═══════════════
@@ -155,20 +179,35 @@ class FirestoreRoleStore:
     def transaction(self, callback):
         return self.fs.transactional(callback)(self.db.transaction())
 
-    def _page(self, collection, status, limit):
+    def _page(self, collection, status, limit, *, fields=None):
         key = collection + ":" + status
         query = self.db.collection(self.prefix + collection).where("status", "==", status).limit(limit)
+        if fields is not None:
+            query = query.select(fields)
         if self.cursors.get(key) is not None:
             query = query.start_after(self.cursors[key])
-        snapshots = list(query.stream())
-        self.cursors[key] = snapshots[-1] if len(snapshots) == limit else None
-        return [{**item.to_dict(), "_documentId": item.id} for item in snapshots]
+        rows, last = [], None
+        for item in query.stream():
+            rows.append({**item.to_dict(), "_documentId": item.id})
+            last = item
+        self.cursors[key] = last if len(rows) == limit else None
+        return rows
 
-    def candidates(self, limit=10):
-        rows = []
+    def candidates(self, limit=10, *, now=None):
+        now = now or utc_now()
+        identifiers = []
         for status in ("pending", "retry", "applying"):
-            rows.extend(self._page("rosterRoleJobs", status, limit))
-        return [row["_documentId"] for row in rows if row.get("guildId") == self.guild_id]
+            rows = self._page("rosterRoleJobs", status, limit,
+                              fields=("status", "guildId", "nextAttemptAt"))
+            for row in rows:
+                if row.get("guildId") != self.guild_id:
+                    continue
+                # This is only a scheduling hint, never permission to mutate roles.
+                # claim()/guard() reread all authoritative documents transactionally.
+                if status != "applying" and timestamp(row.get("nextAttemptAt")) > now:
+                    continue
+                identifiers.append(row["_documentId"])
+        return identifiers
 
     def pending_retries(self, limit=20):
         return self._page("rosterRoleRetries", "pending", limit)
@@ -390,7 +429,7 @@ def select_roles(roles, bot_member, guild_id):
 
 class RecordsRoleWorker:
     def __init__(self, bot, store: FirestoreRoleStore, *, clock=None, blocking=None, log=None,
-                 poll_seconds=15, http_timeout=HTTP_TIMEOUT_SECONDS):
+                 poll_seconds=15, http_timeout=HTTP_TIMEOUT_SECONDS, idle_seconds=60):
         if not 0 < http_timeout <= HTTP_TIMEOUT_SECONDS:
             raise ValueError("role-http-timeout-must-be-at-most-20-seconds")
         self.bot, self.store = bot, store
@@ -402,6 +441,10 @@ class RecordsRoleWorker:
         self._closed = False
         self.last_error = ""
         self.last_health = EMPTY_LEASE
+        self._health_error = None
+        self.idle_seconds = max(self.poll_seconds, idle_seconds)
+        self._wake = asyncio.Event()
+        self._active_until = EMPTY_LEASE
 
     async def start(self):
         if not self._closed and (self.task is None or self.task.done()):
@@ -426,9 +469,38 @@ class RecordsRoleWorker:
                 self.task = None
 
     async def _heartbeat(self, *, force=False):
-        if force or (self.clock() - self.last_health).total_seconds() >= 30:
+        if (force or self._health_error != self.last_error
+                or (self.clock() - self.last_health).total_seconds() >= 30):
             await self.blocking(self.store.health, self.last_error)
             self.last_health = self.clock()
+            self._health_error = self.last_error
+
+    def wake(self):
+        # A web source check commonly precedes an approval. Poll fast briefly,
+        # without a permanent Firestore watch/extra listener thread.
+        if not self._closed:
+            self._active_until = self.clock() + timedelta(seconds=120)
+            self._wake.set()
+
+    async def _wait(self, seconds):
+        # Health is independent of idle queue polling: keep the site's existing
+        # heartbeat cadence even when no role-job query is necessary.
+        while seconds > 0 and not self._closed and not self.bot.is_closed():
+            step = min(30, seconds)
+            try:
+                await asyncio.wait_for(self._wake.wait(), timeout=step)
+            except asyncio.TimeoutError:
+                seconds -= step
+            else:
+                self._wake.clear()
+                return
+            try:
+                await self._heartbeat()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # The normal poll reports connection errors and retries safely.
+                pass
 
     async def _call(self, claim, phase, callback, fields=None):
         await self._heartbeat()
@@ -516,29 +588,41 @@ class RecordsRoleWorker:
 
     async def poll_once(self):
         if self._closed:
-            return
+            return False
+        await self._heartbeat()
+        requests = await self.blocking(self.store.pending_retries)
+        work = False
+        for request in requests:
+            result = await self.blocking(self.store.consume_retry, request, self.clock())
+            work = result == "accepted" or work
+        identifiers = await self.blocking(lambda: self.store.candidates(now=self.clock()))
         self.last_error = ""
-        await self._heartbeat(force=True)
-        for request in await self.blocking(self.store.pending_retries):
-            await self.blocking(self.store.consume_retry, request, self.clock())
-        for identifier in await self.blocking(self.store.candidates):
-            await self.process(identifier)
-        await self._heartbeat(force=True)
+        for identifier in identifiers:
+            result = await self.process(identifier)
+            work = result is not None or work
+        await self._heartbeat()
+        return work
 
     async def run(self):
+        delay = self.poll_seconds
         while not self._closed and not self.bot.is_closed():
+            work = False
             try:
-                await self.poll_once()
+                work = await self.poll_once()
             except asyncio.CancelledError:
                 raise
             except Exception as error:
                 code = failure(error)[1]
-                self.log("기록실 군 역할 작업 재시도 대기: " + code)
+                if code != self.last_error:
+                    self.log("기록실 군 역할 작업 재시도 대기: " + code)
+                self.last_error = code
                 try:
-                    await self.blocking(self.store.health, code)
+                    await self._heartbeat()
                 except Exception:
                     pass
-            await asyncio.sleep(self.poll_seconds)
+            delay = (self.poll_seconds if work or self.clock() < self._active_until
+                     else min(self.idle_seconds, delay * 2))
+            await self._wait(delay)
 
 
 # ═══════════════ 채널 원문·멘션 수집 / 웹 원문 재확인 ═══════════════
@@ -594,6 +678,25 @@ class BridgeConfig:
     poll_seconds: int = 15
     backfill_limit: int = 0
     role_sync_enabled: bool = True
+    role_idle_seconds: int = 60
+    history_poll_seconds: int = 300
+    recent_refresh_seconds: int = 600
+    recent_batch: int = 10
+    db_concurrency: int = 2
+    dedup_entries: int = 128
+    dedup_seconds: int = 600
+
+    def __post_init__(self):
+        bounds = {
+            "poll_seconds": (1, 300), "role_idle_seconds": (15, 300),
+            "history_poll_seconds": (15, 3600), "recent_refresh_seconds": (60, 86400),
+            "recent_batch": (1, 20), "db_concurrency": (1, 4),
+            "dedup_entries": (0, 512), "dedup_seconds": (0, 3600),
+        }
+        for key, (low, high) in bounds.items():
+            value = getattr(self, key)
+            if type(value) is not int or not low <= value <= high:
+                raise ValueError(f"{key}: {low}~{high}의 정수만 가능합니다.")
 
     @classmethod
     def from_environment(cls, environment=None):
@@ -624,7 +727,21 @@ class BridgeConfig:
         roles_enabled = text(env.get("RECORDS_ROLE_SYNC_ENABLED", "true")).lower()
         if roles_enabled not in {"", "0", "false", "no", "off", "1", "true", "yes", "on"}:
             raise ValueError("RECORDS_ROLE_SYNC_ENABLED는 true 또는 false로 설정하세요.")
-        return cls(project, site, channel, guild, 15, backfill, roles_enabled in {"1", "true", "yes", "on"})
+        settings = {}
+        for field, variable, default in (
+                ("role_idle_seconds", "RECORDS_ROLE_IDLE_SECONDS", 60),
+                ("history_poll_seconds", "RECORDS_HISTORY_POLL_SECONDS", 300),
+                ("recent_refresh_seconds", "RECORDS_RECENT_REFRESH_SECONDS", 600),
+                ("recent_batch", "RECORDS_RECENT_BATCH", 10),
+                ("db_concurrency", "RECORDS_DB_CONCURRENCY", 2),
+                ("dedup_entries", "RECORDS_DEDUP_ENTRIES", 128),
+                ("dedup_seconds", "RECORDS_DEDUP_SECONDS", 600)):
+            try:
+                settings[field] = int(env.get(variable, str(default)))
+            except (TypeError, ValueError):
+                raise ValueError(variable + "는 정수로 설정하세요.") from None
+        return cls(project, site, channel, guild, 15, backfill,
+                   roles_enabled in {"1", "true", "yes", "on"}, **settings)
 
 
 def records_database(config: BridgeConfig, existing_db, environment=None):
@@ -702,7 +819,7 @@ def safe_error_code(error: Exception) -> str:
 
 
 ACTION = re.compile(r"^(1\s*군\s*등록|2\s*군\s*말소|1\s*군\s*말소|2\s*군\s*등록)\s*(?:[:：=]|[-–—]>?)?\s*(.*)$")
-TEAM = re.compile(r"^(?:대상\s*팀|팀|소속\s*팀|소속|구단|구단명)\s*[:：=]\s*(.+)$")
+TEAM = re.compile(r"^(?:팀|소속\s*팀|소속|구단|구단명)\s*[:：=]\s*(.+)$")
 PLAYER = re.compile(r"^(?:선수|선수명|닉네임|대상\s*선수)\s*[:：=]\s*(.*)$")
 EMPTY_NAMES = {"", "-", "—", "없음", "해당없음", "해당 없음", "없습니다"}
 USER_MENTION = re.compile(r"<@!?([0-9]{17,20})>")
@@ -715,90 +832,89 @@ def plain_line(line: str) -> str:
     return line.replace("**", "").replace("`", "").strip().lstrip("#>•- ").strip("[]【】 ")
 
 
-SECTION = re.compile(r"^(등록\s*\(\s*Call-up\s*\)|말소\s*\(\s*Send-down\s*\))\s*:?(.*)$", re.IGNORECASE)
-NOTICE_STOP = re.compile(r"^(?:■\s*)?(?:사유\s*및\s*안내사항|안내사항|사유|비고)\s*[:：]", re.IGNORECASE)
-BULLET = re.compile(r"^(?:[-•*]\s*)?(.*?)\s*$")
-PLAYER_LINE = re.compile(r"^(?P<name>[^()（）:：]+?)\s*[（(](?P<meta>[^()（）]*)[）)]\s*[:：]\s*(?P<mention>.*)$")
-
-
 def parse_entries(raw_text: str) -> tuple[list[dict], bool]:
-    """Parse a notice section into *hints* and user mentions, never authorize changes.
+    """Extract hints, never identities. Unclear formats remain manual-review rows."""
+    lines = [plain_line(line) for line in raw_text.splitlines() if line.strip()]
+    explicit_teams = {match.group(1).strip() for line in lines if (match := TEAM.fullmatch(line))}
+    current_team = next(iter(explicit_teams)) if len(explicit_teams) == 1 else ""
+    entries = []
+    current_target = None
+    overflow = False
 
-    Registration (Call-up) => first; Send-down => second. The nickname is the
-    label before the position/number parentheses, never the entire row. Discord
-    roles are only modified after a matching web admin approval.
-    """
-    lines = [re.sub(r"^[\s📌■⚾]+", "", plain_line(line)).strip() for line in raw_text.splitlines() if line.strip()]
-    explicit_teams = {m.group(1).strip() for line in lines if (m := TEAM.fullmatch(line))}
-    team = next(iter(explicit_teams)) if len(explicit_teams) == 1 else ""
-    entries, target, overflow = [], None, len(explicit_teams) > 1
-
-    def append(nickname, to_squad, source, user_id=""):
+    def append(name, target, original, discord_user_id=""):
         nonlocal overflow
-        if any(text_units(x) > bound for x,bound in ((nickname,120),(team,100),(source,1200))):
+        if text_units(name) > 120 or text_units(current_team) > 100 or text_units(original) > 1200:
             overflow = True
         if len(entries) >= 100:
             overflow = True
             return
-        entries.append({"id":str(len(entries)),"nickname":text(nickname,120),
-                        "teamHint":text(team,100),"toSquad":to_squad,
-                        "text":text(source,1200),"discordUserId":user_id})
+        entries.append({"id": str(len(entries)), "nickname": text(name, 120),
+                        "teamHint": text(current_team, 100), "toSquad": target,
+                        "text": text(original, 1200), "discordUserId": discord_user_id})
 
-    def parse_names(value, to_squad, original):
-        value = value.strip()
-        if value in EMPTY_NAMES or value in {"- 없음","• 없음"}:
-            return
-        # One player/line in the announcement format. Split neither position
-        # and jersey number on '/' nor nickname from its actual mention.
-        matched = PLAYER_LINE.fullmatch(value)
-        if matched:
-            nickname = matched.group('name').strip()
-            raw_mention = matched.group('mention').strip()
-            ids = USER_MENTION.findall(raw_mention)
-            if len(ids) == 1 and not NON_USER_PING.search(raw_mention):
-                append(nickname,to_squad,original,ids[0]);return
-            # No identity is inferred from @display-text, a role ping or two IDs.
-            append(nickname,'unknown' if len(ids)>1 or NON_USER_PING.search(raw_mention) else to_squad,original)
-            return
-        ids=USER_MENTION.findall(value)
-        if ids and not NON_USER_PING.search(value):
-            # A bare mention list has no unambiguous nickname; website matches ID.
-            for uid in dict.fromkeys(ids):append('',to_squad,original,uid)
-            return
-        # Legacy '1군 등록: 이름' or '선수: 이름' must still import as hint only.
-        m=PLAYER.fullmatch(value)
-        nickname=(m.group(1) if m else value).strip()
-        nickname=re.sub(r"\s*[（(][^()（）]*[）)]\s*$",'',nickname).strip()
-        if nickname and nickname not in EMPTY_NAMES and not NON_USER_PING.search(nickname):
-            append(nickname,to_squad,original)
+    def names(value, target, original):
+        nonlocal overflow
+        match = PLAYER.fullmatch(value)
+        value = match.group(1) if match else value
+        if any(label in value.replace(" ", "") for label in ("1군등록", "1군말소", "2군등록", "2군말소")):
+            target = "unknown"
+            if not USER_MENTION.search(value):
+                append("", "unknown", original)
+                return
+        seen_mentions = set()
+        for name in re.split(r"[,，;；/|]+", value):
+            name = name.strip()
+            if name in EMPTY_NAMES:
+                continue
+            mentions = USER_MENTION.findall(name)
+            if mentions:
+                # IDs come only from explicit user mentions. Adjacent mentions
+                # remain independent targets; nearby display names are not proof.
+                for discord_user_id in mentions:
+                    if discord_user_id not in seen_mentions:
+                        append("", target, original, discord_user_id)
+                        seen_mentions.add(discord_user_id)
+                continue
+            if NON_USER_PING.search(name):
+                continue  # Role/everyone pings are never player identities.
+            if text_units(name) > 120:
+                overflow = True
+                append("", "unknown", original)
+            else:
+                append(name, target, original)
 
     for line in lines:
-        if TEAM.fullmatch(line):continue
-        if NOTICE_STOP.match(line):
-            target=None
-            break  # Explanation below is not a second list of players.
-        section=SECTION.fullmatch(line)
-        if section:
-            target='first' if section.group(1).lower().startswith('등록') else 'second'
-            if section.group(2).strip():parse_names(section.group(2),target,line)
+        team_match = TEAM.fullmatch(line)
+        if team_match:
+            current_team = team_match.group(1).strip()
             continue
-        action=ACTION.fullmatch(line)
+        action = ACTION.fullmatch(line)
         if action:
-            label=action.group(1).replace(' ','')
-            target='first' if label in {'1군등록','2군말소'} else 'second'
-            if action.group(2).strip():parse_names(action.group(2),target,line)
+            label = action.group(1).replace(" ", "")
+            current_target = "first" if label in {"1군등록", "2군말소"} else "second"
+            if action.group(2).strip():
+                names(action.group(2), current_target, line)
             continue
-        if target and line.startswith(('📌','■')):
-            target=None;continue
-        if target and not line.startswith(('----','════')):
-            m=BULLET.fullmatch(line)
-            candidate=m.group(1).strip() if m else line
-            if candidate:
-                parse_names(candidate,target,line)
+        player = PLAYER.fullmatch(line)
+        if current_target and player:
+            names(player.group(1), current_target, line)
+            continue
+        if current_target and not re.search(r"[:：=]|승인|날짜|사유|메모|요청|https?://", line):
+            names(line, current_target, line)
+            continue
+        if USER_MENTION.search(line) and not MENTION_METADATA.match(line):
+            names(line, "unknown", line)
+            current_target = None
+            continue
+        # A generic 등록/말소 or a different movement is not assumed to be 1군/2군.
+        if re.match(r"^(?:등록|말소|콜업|승격|강등|이동|변경)\s*[:：=]", line):
+            append("", "unknown", line)
+        current_target = None
     if not entries:
-        entries.append({"id":"0","nickname":"","teamHint":text(team,100),
-                        "toSquad":"unknown","text":text(raw_text,1200),"discordUserId":""})
-    return entries,overflow
+        overflow = overflow or text_units(raw_text) > 1200 or text_units(current_team) > 100
+        entries.append({"id": "0", "nickname": "", "teamHint": text(current_team, 100),
+                        "toSquad": "unknown", "text": text(raw_text, 1200), "discordUserId": ""})
+    return entries, overflow
 
 
 def message_snapshot(message, config: BridgeConfig, expected_guild: str) -> dict:
@@ -937,7 +1053,9 @@ class FirestoreInboxStore:
         return checks
 
     def recent_sources(self, limit=100) -> list[dict]:
-        query = self.db.collection(self.prefix + "rosterInbox").order_by("updatedAt", direction="DESCENDING").limit(limit)
+        query = (self.db.collection(self.prefix + "rosterInbox")
+                 .order_by("updatedAt", direction="DESCENDING").limit(limit)
+                 .select(("messageId", "channelId", "deleted", "updatedAt")))
         return [value for item in query.stream() if (value := item.to_dict()).get("channelId") == self.config.channel_id and not value.get("deleted")]
 
     def observe(self, incoming: dict, check: dict | None = None) -> str:
@@ -1014,6 +1132,7 @@ class RecordsRosterBridge:
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self._blocking = blocking or asyncio.to_thread
         self._blocking_tasks = set()
+        self._blocking_slots = asyncio.Semaphore(config.db_concurrency)
         self.blocking = self._call_blocking
         self.log = log or print
         self.channel = None
@@ -1024,6 +1143,11 @@ class RecordsRosterBridge:
         self.locks = [asyncio.Lock() for _ in range(64)]
         self.refresh_offset = 0
         self.last_refresh = None
+        self.last_catch_up = None
+        self._last_health = EMPTY_LEASE
+        self._health_error = None
+        self._recent_observations = OrderedDict()
+        self._wake = asyncio.Event()
         self.started = False
         self.poll_error = ""
         self.role_worker = None
@@ -1033,11 +1157,22 @@ class RecordsRosterBridge:
         self._event_tasks = set()
 
     async def _call_blocking(self, callback, *args, **kwargs):
-        # Cancelling to_thread's waiter does not stop its thread. Keep the real
-        # operation alive and tracked so unload can drain it before returning.
         if self.closed:
             raise asyncio.CancelledError()
-        task = asyncio.create_task(self._blocking(callback, *args, **kwargs))
+        # Acquire BEFORE scheduling to_thread; do not fill its executor queue.
+        await self._blocking_slots.acquire()
+        if self.closed:
+            self._blocking_slots.release()
+            raise asyncio.CancelledError()
+
+        async def execute():
+            try:
+                return await self._blocking(callback, *args, **kwargs)
+            finally:
+                # The shielded operation, not its cancelled waiter, owns the slot.
+                self._blocking_slots.release()
+
+        task = asyncio.create_task(execute())
         self._blocking_tasks.add(task)
         task.add_done_callback(self._blocking_done)
         result = await asyncio.shield(task)
@@ -1057,6 +1192,15 @@ class RecordsRosterBridge:
         async def dispatch(*args):
             if self.closed:
                 return
+            # Ignore other channels before tracking/awaiting any event work.
+            if args:
+                obj = args[0]
+                channel_id = (getattr(getattr(obj, "channel", None), "id", "")
+                              if name == "on_message" else getattr(obj, "channel_id", ""))
+                guild_id = (getattr(getattr(obj, "guild", None), "id", None)
+                            if name == "on_message" else getattr(obj, "guild_id", None))
+                if not self.accepts(channel_id, guild_id):
+                    return
             task = asyncio.current_task()
             self._event_tasks.add(task)
             try:
@@ -1093,6 +1237,7 @@ class RecordsRosterBridge:
         # their completion; none can schedule another call after closed=True.
         if self._blocking_tasks:
             await asyncio.gather(*tuple(self._blocking_tasks), return_exceptions=True)
+        self._recent_observations.clear()
 
     async def start_roles(self):
         if self.closed:
@@ -1102,7 +1247,9 @@ class RecordsRosterBridge:
             return
         if self.role_worker is None:
             role_store = FirestoreRoleStore(self.store.db, self.config.site_id, self.guild_id, self.store.fs)
-            self.role_worker = RecordsRoleWorker(self.bot, role_store, clock=self.clock, blocking=self.blocking, log=self.log)
+            self.role_worker = RecordsRoleWorker(
+                self.bot, role_store, clock=self.clock, blocking=self.blocking, log=self.log,
+                poll_seconds=self.config.poll_seconds, idle_seconds=self.config.role_idle_seconds)
         await self.role_worker.start()
 
     def lock(self, message_id):
@@ -1148,9 +1295,10 @@ class RecordsRosterBridge:
                 self.cursor = await self.blocking(self.store.advance_cursor, str(message.id))
         else:
             self.cursor = await self.blocking(self.store.initialize_cursor, self.cutoff, guild_id)
-        await self.blocking(self.store.health, guild_id)
+        await self._heartbeat(force=True)
         if not self.started:
-            for name in ("on_message", "on_raw_message_edit", "on_raw_message_delete", "on_raw_bulk_message_delete"):
+            for name in ("on_message", "on_raw_message_edit", "on_raw_message_delete",
+                         "on_raw_bulk_message_delete", "on_ready", "on_resumed"):
                 callback = self._listener(name)
                 self.bot.add_listener(callback, name)
                 self._listeners[name] = callback
@@ -1158,13 +1306,35 @@ class RecordsRosterBridge:
         self.task = asyncio.create_task(self.run(), name="records-roster-inbox")
         self.log("기록실 등말소 수집 연결 완료: " + self.config.site_id + " / 채널 " + self.config.channel_id)
 
-    async def ingest(self, message, *, allow_before_cutoff=False, check=None):
+    async def ingest(self, message, *, allow_before_cutoff=False, check=None, bypass_cache=False):
         if not self.accepts(getattr(getattr(message, "channel", None), "id", ""), getattr(getattr(message, "guild", None), "id", "")):
             return "ignored"
         if not allow_before_cutoff and int(message.id) <= int(self.cutoff):
             return "ignored"
         incoming = message_snapshot(message, self.config, self.guild_id)
-        return await self.blocking(self.store.observe, incoming, check)
+        cache = self._recent_observations
+        now = self.clock()
+        while cache and next(iter(cache.values()))[1] <= now:
+            cache.popitem(last=False)
+        enabled = bool(self.config.dedup_entries and self.config.dedup_seconds)
+        digest = (hashlib.sha256(json.dumps(incoming, ensure_ascii=False, sort_keys=True,
+                                            separators=(",", ":")).encode()).digest()
+                  if enabled else b"")
+        cached = cache.get(incoming["id"])
+        if (enabled and check is None and not bypass_cache and cached is not None
+                and cached[0] == digest and cached[1] > now):
+            return "unchanged"
+        result = await self.blocking(self.store.observe, incoming, check)
+        if enabled and result in {"created", "changed", "unchanged"}:
+            # Only successful persistence is cached; never cache a stale/rejected
+            # write. Canonical checks bypass it and refresh verifiedAt in Firestore.
+            cache[incoming["id"]] = (digest, self.clock() + timedelta(seconds=self.config.dedup_seconds))
+            cache.move_to_end(incoming["id"])
+            while len(cache) > self.config.dedup_entries:
+                cache.popitem(last=False)
+        else:
+            cache.pop(incoming["id"], None)
+        return result
 
     async def fetch_and_observe(self, message_id, check=None):
         message_id = snowflake(message_id)
@@ -1173,11 +1343,12 @@ class RecordsRosterBridge:
                 message = await self.channel.fetch_message(int(message_id))
             except Exception as error:
                 if is_unknown_message(error):
+                    self._recent_observations.pop(source_id(self.config.channel_id, message_id), None)
                     return await self.blocking(self.store.mark_deleted, source_id(self.config.channel_id, message_id), check)
                 if check:
                     await self.blocking(self.store.fail_check, check, safe_error_code(error))
                 raise
-            return await self.ingest(message, allow_before_cutoff=True, check=check)
+            return await self.ingest(message, allow_before_cutoff=True, check=check, bypass_cache=True)
 
     async def on_message(self, message):
         if not self.accepts(getattr(getattr(message, "channel", None), "id", ""), getattr(getattr(message, "guild", None), "id", "")):
@@ -1202,6 +1373,7 @@ class RecordsRosterBridge:
             return
         try:
             async with self.lock(payload.message_id):
+                self._recent_observations.pop(source_id(self.config.channel_id, payload.message_id), None)
                 await self.blocking(self.store.mark_deleted, source_id(self.config.channel_id, payload.message_id))
         except Exception as error:
             self.log("등말소 원문 삭제 확인 보류: " + safe_error_code(error))
@@ -1219,6 +1391,8 @@ class RecordsRosterBridge:
 
     async def refresh_checks(self):
         checks = await self.blocking(self.store.pending_checks)
+        if checks and self.role_worker is not None:
+            self.role_worker.wake()
         for check in checks:
             identifier = text(check.get("id"))
             prefix, separator, message_id = identifier.partition("_")
@@ -1235,23 +1409,28 @@ class RecordsRosterBridge:
 
     async def catch_up(self):
         import discord
-        # Each poll processes one page. The durable cursor advances only after a
-        # successful observation, so restarts and transient errors do not skip rows.
+        # Commit once per fully observed page. A crash before the checkpoint
+        # replays the page (idempotent) instead of skipping any unobserved message.
+        count, last = 0, None
         async for message in self.channel.history(limit=100, after=discord.Object(id=int(self.cursor)), oldest_first=True):
             async with self.lock(message.id):
                 await self.ingest(message, allow_before_cutoff=True)
-            self.cursor = await self.blocking(self.store.advance_cursor, str(message.id))
+            last, count = str(message.id), count + 1
+        if last is not None:
+            self.cursor = await self.blocking(self.store.advance_cursor, last)
+        return count
 
     async def refresh_recent(self):
         now = self.clock()
-        if self.last_refresh and (now - self.last_refresh).total_seconds() < 60:
+        if self.last_refresh and (now - self.last_refresh).total_seconds() < self.config.recent_refresh_seconds:
             return
         sources = await self.blocking(self.store.recent_sources)
         if sources:
             # Bound background work. Every explicit approval check has priority and
             # fetches its own canonical source regardless of age/background window.
             start = self.refresh_offset % len(sources)
-            chosen = (sources[start:] + sources[:start])[:20]
+            chosen = [sources[(start + offset) % len(sources)]
+                      for offset in range(min(self.config.recent_batch, len(sources)))]
             for source in chosen:
                 try:
                     await self.fetch_and_observe(source["messageId"])
@@ -1261,12 +1440,35 @@ class RecordsRosterBridge:
             self.refresh_offset = (start + len(chosen)) % len(sources)
         self.last_refresh = now
 
+    async def _heartbeat(self, *, force=False):
+        if (force or self._health_error != self.poll_error
+                or (self.clock() - self._last_health).total_seconds() >= 30):
+            await self.blocking(self.store.health, self.guild_id, self.poll_error)
+            self._last_health = self.clock()
+            self._health_error = self.poll_error
+
+    async def on_ready(self):
+        if not self.closed:
+            self.last_catch_up = None
+            self._wake.set()
+            if self.role_worker is not None:
+                self.role_worker.wake()
+
+    async def on_resumed(self):
+        await self.on_ready()
+
     async def poll_once(self):
         self.poll_error = ""
+        # Approval checks retain the original 15-second cadence and fresh REST.
         await self.refresh_checks()
-        await self.catch_up()
+        now = self.clock()
+        if (self.last_catch_up is None
+                or (now - self.last_catch_up).total_seconds() >= self.config.history_poll_seconds):
+            count = await self.catch_up()
+            # Drain a backlog one page per regular tick, not one page/5 minutes.
+            self.last_catch_up = None if count >= 100 else self.clock()
         await self.refresh_recent()
-        await self.blocking(self.store.health, self.guild_id, self.poll_error)
+        await self._heartbeat()
 
     async def run(self):
         while not self.closed and not self.bot.is_closed():
@@ -1276,12 +1478,19 @@ class RecordsRosterBridge:
                 raise
             except Exception as error:
                 code = safe_error_code(error)
-                self.log("등말소 연동 재시도 대기: " + code)
+                self.poll_error = code
+                if code != self._health_error:
+                    self.log("등말소 연동 재시도 대기: " + code)
                 try:
-                    await self.blocking(self.store.health, self.guild_id, code)
+                    await self._heartbeat()
                 except Exception:
                     pass
-            await asyncio.sleep(self.config.poll_seconds)
+            try:
+                await asyncio.wait_for(self._wake.wait(), timeout=self.config.poll_seconds)
+            except asyncio.TimeoutError:
+                pass
+            else:
+                self._wake.clear()
 
 
 async def start_records_roster_bridge(bot, existing_db, current=None, environment=None):
@@ -1372,7 +1581,7 @@ def resolve_connection(bot, environment=None):
     project = text(env.get("RECORDS_FIREBASE_PROJECT_ID", RECORDS_PROJECT_ID), 80)
     site = text(env.get("RECORDS_SITE_ID", RECORDS_SITE_ID), 40)
     if project and not PROJECT_ID.fullmatch(project):
-        raise RecordsConfigurationError("project-setting-invalid", "RECORDS_FIREBASE_PROJECT_ID 또는 파일 위의 RECORDS_PROJECT_ID를 확인하세요.")
+        raise RecordsConfigurationError("project-setting-invalid", "RECORDS_FIREBASE_PROJECT_ID 또는 파일 위 RECORDS_PROJECT_ID를 확인하세요.")
     if site and site not in SITES:
         raise RecordsConfigurationError("site-setting-invalid", "기록실은 sst-dbo 또는 kmb-league 중 하나로 지정하세요.")
     clients = _available_databases(bot, env)
@@ -1486,8 +1695,8 @@ class RecordsRosterCog(commands.Cog, name="RecordsRoster"):
                         self.state = "running"
                         self.last_error = ""
                         LOGGER.info(
-                            "등말소 Cog 실행: 사이트=%s, 채널=%s, 역할=%s/%s. 웹 승인 후에만 역할을 변경합니다.",
-                            candidate.config.site_id, CHANNEL_ID, ROLE_IDS["first"], ROLE_IDS["second"],
+                            "등말소 Cog 실행 [%s]: 사이트=%s, 채널=%s, 역할=%s/%s. 웹 승인 후에만 역할을 변경합니다.",
+                            COG_VERSION, candidate.config.site_id, CHANNEL_ID, ROLE_IDS["first"], ROLE_IDS["second"],
                         )
                     return
                 except asyncio.CancelledError:
