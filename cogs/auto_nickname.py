@@ -1133,12 +1133,277 @@ class AutoNickname(commands.GroupCog, group_name="별명", group_description="�
 
 
 async def setup(bot: commands.Bot) -> None:
-    """기존 봇에서 await bot.load_extension('cogs.auto_nickname')로 불러옵니다."""
-    guild_ids = configured_guild_ids()
-    data_path = Path(os.environ.get("AUTO_NICK_DATA_PATH", str(DEFAULT_DATA_PATH))).expanduser().resolve()
+    # AUTO_NICK_GUILD_IDS → ALLOWED_GUILD_IDS → 기존 파일 설정 순서.
+    raw = os.environ.get("AUTO_NICK_GUILD_IDS")
+    if raw is None:
+        raw = os.environ.get("ALLOWED_GUILD_IDS")
+
+    guild_ids = (
+        parse_guild_ids(raw)
+        if raw is not None
+        else configured_guild_ids()
+    )
+    if not guild_ids:
+        raise ValueError("자동 별명을 사용할 서버 ID를 지정하세요.")
+
+    # 서버 정렬과 Object 생성은 한 번만 수행합니다.
+    targets = tuple(
+        discord.Object(id=gid)
+        for gid in sorted(guild_ids)
+    )
+    data_path = Path(
+        os.environ.get("AUTO_NICK_DATA_PATH", str(DEFAULT_DATA_PATH))
+    ).expanduser().resolve()
+
     cog = AutoNickname(bot, guild_ids, data_path)
+    tree = bot.tree
+    command = cog.app_command
+    cog_name = cog.qualified_name
+
+    # 작업 시작 전에 중복 코그와 명령을 확인합니다.
+    if bot.get_cog(cog_name) is not None:
+        raise RuntimeError("자동 별명 코그가 이미 실행 중입니다.")
+
+    for target in targets:
+        current = tree.get_command(command.name, guild=target)
+        if current is not None and current is not command:
+            raise RuntimeError(
+                f"서버 {target.id}의 /별명 명령이 중복됩니다."
+            )
+
+    registration_task = None
+    cleanup_task = None
+    original_unload = cog.cog_unload
+
+    def is_active() -> bool:
+        return (
+            not cog._closing
+            and not bot.is_closed()
+            and bot.get_cog(cog_name) is cog
+        )
+
+    async def register_commands() -> None:
+        nonlocal registration_task
+
+        try:
+            if not is_active():
+                return
+
+            await bot.wait_until_ready()
+
+            if not is_active():
+                return
+
+            # 서버마다, 재시도마다 다시 만들지 않고 재사용합니다.
+            payload = command.to_dict(tree)
+
+            for key in (
+                "dm_permission",
+                "contexts",
+                "integration_types",
+            ):
+                payload.pop(key, None)
+
+            permissions = payload.get("default_member_permissions")
+            if permissions is not None:
+                payload["default_member_permissions"] = str(permissions)
+
+            for target in targets:
+                gid = target.id
+
+                for attempt in range(3):
+                    if not is_active():
+                        return
+
+                    try:
+                        guild = bot.get_guild(gid)
+
+                        if guild is None:
+                            LOG.error(
+                                "[자동 별명] 서버 ID/봇 가입 확인 필요: %s",
+                                gid,
+                            )
+                            break
+
+                        if guild.unavailable:
+                            raise OSError(
+                                "서버 연결이 일시적으로 끊겼습니다."
+                            )
+
+                        current = tree.get_command(
+                            command.name,
+                            guild=target,
+                        )
+
+                        if current is not None and current is not command:
+                            LOG.error(
+                                "[자동 별명] 다른 코그의 /별명과 충돌: %s",
+                                gid,
+                            )
+                            break
+
+                        if current is None:
+                            tree.add_command(command, guild=target)
+
+                        application_id = bot.application_id
+                        if application_id is None:
+                            raise OSError(
+                                "application_id가 아직 준비되지 않았습니다."
+                            )
+
+                        # 전체 tree.sync() 대신 /별명 그룹만 등록합니다.
+                        result = await asyncio.wait_for(
+                            bot.http.upsert_guild_command(
+                                application_id,
+                                gid,
+                                payload=payload,
+                            ),
+                            timeout=30,
+                        )
+
+                        if (
+                            not isinstance(result, dict)
+                            or not result.get("id")
+                            or result.get("name") != command.name
+                        ):
+                            LOG.error(
+                                "[자동 별명] 등록 응답 확인 실패: 서버=%s",
+                                gid,
+                            )
+                            break
+
+                        LOG.info(
+                            "[자동 별명] /별명 등록 완료: 서버=%s",
+                            gid,
+                        )
+                        break
+
+                    except discord.HTTPException as exc:
+                        LOG.warning(
+                            "[자동 별명] 등록 실패: "
+                            "서버=%s HTTP=%s 코드=%s",
+                            gid,
+                            exc.status,
+                            exc.code,
+                        )
+
+                        # 권한 오류·잘못된 요청 등은 반복하지 않습니다.
+                        if exc.status != 429 and exc.status < 500:
+                            break
+
+                    except (OSError, asyncio.TimeoutError) as exc:
+                        LOG.warning(
+                            "[자동 별명] 등록 통신 오류: "
+                            "서버=%s 종류=%s",
+                            gid,
+                            type(exc).__name__,
+                        )
+
+                    except asyncio.CancelledError:
+                        raise
+
+                    except Exception:
+                        LOG.exception(
+                            "[자동 별명] 명령 등록 실패: 서버=%s",
+                            gid,
+                        )
+                        break
+
+                    # 일시적인 실패만 최대 3회 시도합니다.
+                    if attempt < 2:
+                        await asyncio.sleep(5 * (attempt + 1))
+                else:
+                    LOG.error(
+                        "[자동 별명] 등록 재시도 3회 소진: 서버=%s",
+                        gid,
+                    )
+
+        except asyncio.CancelledError:
+            raise
+
+        except Exception:
+            LOG.exception("[자동 별명] 시작 후 명령 등록 실패")
+
+        finally:
+            # 완료한 등록 작업의 참조를 해제합니다.
+            if registration_task is asyncio.current_task():
+                registration_task = None
+
+    async def cleanup() -> None:
+        nonlocal registration_task
+
+        task, registration_task = registration_task, None
+
+        try:
+            if task is not None:
+                if not task.done():
+                    task.cancel()
+
+                await asyncio.gather(
+                    task,
+                    return_exceptions=True,
+                )
+        finally:
+            try:
+                await original_unload()
+            finally:
+                # 로컬 트리에서 자기 명령만 정리합니다.
+                # 다른 코그의 명령으로 교체됐다면 건드리지 않습니다.
+                for target in targets:
+                    current = tree.get_command(
+                        command.name,
+                        guild=target,
+                    )
+                    if current is command:
+                        tree.remove_command(
+                            command.name,
+                            guild=target,
+                        )
+
+    async def unload_with_cleanup() -> None:
+        nonlocal cleanup_task
+
+        cog._closing = True
+
+        # 여러 곳에서 종료를 요청해도 실제 정리는 한 번만 합니다.
+        if cleanup_task is None:
+            cleanup_task = asyncio.create_task(
+                cleanup(),
+                name="auto-nickname-cleanup",
+            )
+
+        await asyncio.shield(cleanup_task)
+
+    cog.cog_unload = unload_with_cleanup
+
     try:
-        await bot.add_cog(cog, guilds=[discord.Object(id=gid) for gid in sorted(guild_ids)])
+        await bot.add_cog(cog, guilds=targets)
+
+        starter = getattr(cog, "start_command_registration", None)
+
+        if callable(starter):
+            # 기존 내장 등록 기능이 있으면 그 기능만 사용합니다.
+            starter()
+        else:
+            registration_task = asyncio.create_task(
+                register_commands(),
+                name="auto-nickname-command-register",
+            )
+
     except BaseException:
-        await cog.cog_unload()
+        # 코그 추가 이후 실패했다면 명령과 리스너도 제거합니다.
+        try:
+            if bot.get_cog(cog_name) is cog:
+                await bot.remove_cog(
+                    cog_name,
+                    guilds=targets,
+                )
+        except Exception:
+            LOG.exception("[자동 별명] 실패한 코그 제거 중 오류")
+
+        try:
+            await unload_with_cleanup()
+        except Exception:
+            LOG.exception("[자동 별명] 작업 정리 중 오류")
+
         raise
