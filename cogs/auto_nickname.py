@@ -893,7 +893,7 @@ class AutoNickname(commands.GroupCog, group_name="별명", group_description="�
         await interaction.response.defer(ephemeral=True)
         gid = interaction.guild_id
         await self.store.mutate(gid, lambda config: config.__setitem__("enabled", state == "on"))
-        self.request_scan(gid)
+        self.request_scan(gid, fresh=True)
         if state == "on":
             await self._reply(interaction, "자동 별명을 **켰습니다**. 기존 멤버부터 차례로 확인합니다.\n규칙이 없다면 `/별명 규칙추가`로 등록하세요. 결과는 `/별명 상태`에서 확인할 수 있습니다.")
         else:
