@@ -1132,6 +1132,15 @@ class AutoNickname(commands.GroupCog, group_name="별명", group_description="�
         if self._failures[gid]:
             embed.add_field(name="최근 제한/오류 (해결 후에도 최근 이력으로 남습니다)", value="\n".join(self._failures[gid])[:1024], inline=False)
         embed.set_footer(text="누적 횟수는 고유 인원수가 아닙니다. 실패는 /별명 적용 또는 다음 안전 검사로 다시 시도합니다.")
+        embed.add_field(
+            name="규칙 저장 위치",
+            value=(
+                f"파일: `{self.store.path}`\n"
+                f"파일 존재: {'있음' if self.store.path.is_file() else '없음'}\n"
+                f"Railway Volume 경로: `{os.environ.get('RAILWAY_VOLUME_MOUNT_PATH') or '확인되지 않음'}`"
+            ),
+            inline=False,
+        )
         await self._reply(interaction, embed=embed)
 
     @app_commands.command(name="도움말", description="자동 별명 명령 사용법과 규칙 선정 방식을 확인합니다")
