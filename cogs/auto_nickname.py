@@ -787,25 +787,42 @@ class AutoNickname(commands.GroupCog, group_name="별명", group_description="�
         self._request_all()
 
     @commands.Cog.listener()
-    async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
+    async def on_member_update(
+        self,
+        before: discord.Member,
+        after: discord.Member,
+    ) -> None:
         gid = after.guild.id
-        if gid not in self.guild_ids:
+        if self._closing or gid not in self.guild_ids:
             return
-        roles_changed = {r.id for r in before.roles} != {r.id for r in after.roles}
+
+        roles_changed = (
+            {role.id for role in before.roles}
+            != {role.id for role in after.roles}
+        )
+        nickname_changed = before.nick != after.nick
+
         if after.bot:
-            if self.bot.user and after.id == self.bot.user.id and roles_changed:
-                self.request_scan(gid)
+            if (
+                self.bot.user
+                and after.id == self.bot.user.id
+                and roles_changed
+            ):
+                self.request_scan(gid, fresh=True)
             return
-        if roles_changed or before.nick != after.nick:
-            config = self.store.snapshot(gid, include_members=False)
-            if not self._needs_work(config, after):
-                return
-            # 자신이 편집한 별명 이벤트는 편집 작업이 성공 기록을 남기므로 중복 조회 제외.
-            record = self.store.record(gid, after.id)
-            if (not roles_changed and self._active == (gid, after.id) and record
-                and record.get("pending_nick") == after.nick):
-                return
-            self.enqueue(gid, after.id)
+
+        if not roles_changed and not nickname_changed:
+            return
+
+        config = self.store.snapshot(gid, include_members=False)
+        if not self._needs_work(config, after):
+            return
+
+        # 관리자도 동일하게 처리합니다.
+        # 별명을 지운 경우(after.nick is None)도 다시 적용합니다.
+        # 처리 중인 멤버라도 변경 이벤트를 버리지 않고 재확인을 예약합니다.
+        # 실제 변경 필요 여부와 권한은 기존 작업기가 다시 확인합니다.
+        self.enqueue(gid, after.id)
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member) -> None:
